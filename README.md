@@ -1,4 +1,9 @@
-# Plexus
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo-light.png" alt="Plexus" height="96">
+  </picture>
+</h1>
 
 Plex client for Google TV and Android TV, built with Kotlin and Jetpack Compose for TV.
 
@@ -74,7 +79,7 @@ Plexus plays your Plex library with a fast, remote-friendly interface. It can al
 - An owner's or admin's tools (update metadata, preview thumbnail settings, Discover and downloads) only appear for the owner.
 
 ### Personalisation
-- **Look**: themes; five side bar styles with a live preview; text size; card size (80% by default); and app icon variants (dark, light, transparent, with or without text).
+- **Look**: themes; five side bar styles with a live preview; text size; card size (80% by default); and app icon variants (dark, light, transparent, with or without text (may take a while to update, if you use Projectivy launcher like I do, removing and adding the icon worked)).
 - **Minimal look**: hide row titles, episode text, watched badges and progress bars.
 - **Spoilers**: blur unwatched episode images and hide their descriptions.
 - **Side bar**: you can hide it (Left still opens it), and choose whether it appears on title pages.
