@@ -4,6 +4,16 @@ Plex client for Google TV and Android TV, built with Kotlin and Jetpack Compose 
 
 Plexus plays your Plex library with a fast, remote-friendly interface. It can also connect to Radarr and Sonarr, so you can find new movies and shows and add them from the couch.
 
+![Home](docs/screenshots/home.png)
+
+## Screenshots
+
+| | |
+|:---:|:---:|
+| ![Home with the side bar hidden](docs/screenshots/home-hero.png)<br>**Home**, with the side bar hidden | ![A library's Recommended tab](docs/screenshots/library.png)<br>**Library**: Recommended, Browse, Collections, Categories |
+| ![Episodes, with upcoming episodes at the end](docs/screenshots/episodes.png)<br>**Episodes**, with upcoming ones at the end | ![Discover](docs/screenshots/discover.png)<br>**Discover**: In library, Monitored and release tags |
+| ![The player](docs/screenshots/player.png)<br>**Player**, with subtitles | |
+
 ---
 
 ## Features
@@ -71,7 +81,7 @@ Plexus plays your Plex library with a fast, remote-friendly interface. It can al
 - **Other**: navigation sounds, and a splash screen on cold start only.
 
 ### Updates
-- Plexus checks this repository's GitHub Releases for a newer version and installs it in-app, after you confirm. See [Releasing an update](#releasing-an-update).
+- Plexus checks this repository's GitHub Releases for a newer version and installs it in-app, after you confirm.
 
 ---
 
