@@ -462,6 +462,11 @@ private fun AppearancePage(s: AppSettings, onChangeTheme: () -> Unit, onChangeNa
         TextSizeSlider(s.textScale, { s.textScale = it }, Modifier.inChain())
     }
     SettingsNote("Changes all text in the app, including descriptions, episode details, these settings and title logos.")
+    ToggleSetting(
+        "Separate sizes for each profile",
+        "On: each profile keeps its own card size and text size. Off: one card size and one text size for everyone on this TV.",
+        s.sizesPerProfile,
+    ) { s.sizesPerProfile = it }
 
     SettingsSection("App icon")
     val context = LocalContext.current
@@ -500,6 +505,7 @@ private fun HomePage(
 
     SettingsSection("Layout")
     Box(Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) { SizeSlider(cardScale, onCardScale, Modifier.inChain()) }
+    Box(Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) { SpacingSlider(s.cardSpacing, { s.cardSpacing = it }, Modifier.inChain()) }
     ToggleSetting(
         "Hide the side bar",
         "Hide the strip of icons on the left so pages use the whole screen. Left at the start of a row still opens it.",

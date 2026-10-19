@@ -211,8 +211,8 @@ fun CollectionsScreen(
                     columns = GridCells.Adaptive(150.dp * cardScale),
                     // The page margin is padding inside the grid, so highlighted posters aren't clipped.
                     contentPadding = PaddingValues(top = 16.dp, bottom = 40.dp, start = 48.dp, end = 48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(26.dp),
+                    horizontalArrangement = Arrangement.spacedBy(cardGap(24.dp)),
+                    verticalArrangement = Arrangement.spacedBy(cardGap(26.dp)),
                 ) {
                     itemsIndexed(list, key = { _, g -> g.primary.ratingKey }) { i, group ->
                         val collection = group.primary

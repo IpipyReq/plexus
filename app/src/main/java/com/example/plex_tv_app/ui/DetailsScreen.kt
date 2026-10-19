@@ -416,7 +416,7 @@ private fun Extras(
             LazyRow(
                 state = rowState,
                 contentPadding = PaddingValues(horizontal = SidePad, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
             ) {
                 itemsIndexed(row.items, key = { _, item -> item.ratingKey }) { i, item ->
                     MediaCard(
@@ -684,7 +684,7 @@ private fun ShowOverview(
                     LazyRow(
                         state = seasonsState,
                         contentPadding = PaddingValues(horizontal = SidePad, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
                     ) {
                         itemsIndexed(list, key = { _, s -> s.ratingKey }) { i, season ->
                             MediaCard(
@@ -846,7 +846,7 @@ private fun CollectionRow(
     LazyRow(
         state = rowState,
         contentPadding = PaddingValues(horizontal = SidePad, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
     ) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { i, item ->
             MediaCard(
@@ -1294,7 +1294,7 @@ private fun ShowDetails(
                     LazyRow(
                         state = listState,
                         contentPadding = PaddingValues(horizontal = SidePad, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
                     ) {
                         itemsIndexed(episodes, key = { _, ep -> ep.ratingKey }) { i, ep ->
                             MediaCard(

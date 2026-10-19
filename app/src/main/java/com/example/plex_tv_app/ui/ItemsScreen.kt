@@ -99,8 +99,8 @@ fun ItemsScreen(
                     state = gridState,
                     columns = GridCells.Adaptive((if (landscape) 260.dp else 150.dp) * cardScale),
                     contentPadding = PaddingValues(top = 20.dp, bottom = 40.dp, start = 48.dp, end = 48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(28.dp),
+                    horizontalArrangement = Arrangement.spacedBy(cardGap(24.dp)),
+                    verticalArrangement = Arrangement.spacedBy(cardGap(28.dp)),
                 ) {
                     itemsIndexed(list, key = { _, item -> item.ratingKey }) { i, item ->
                         MediaCard(

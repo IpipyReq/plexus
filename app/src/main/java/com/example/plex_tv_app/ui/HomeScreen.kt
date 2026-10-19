@@ -398,7 +398,7 @@ private fun HubRow(
         LazyRow(
             state = listState,
             contentPadding = PaddingValues(horizontal = 48.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalArrangement = Arrangement.spacedBy(cardGap(20.dp)),
         ) {
             // Keyed by item, so a refresh that shifts things along keeps your highlight on the same title.
             itemsIndexed(hub.items, key = { _, item -> item.ratingKey }) { i, item ->

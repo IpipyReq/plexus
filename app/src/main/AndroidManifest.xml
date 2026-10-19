@@ -116,10 +116,6 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity-alias>
-        <!-- Hears back from Android's installer during an in-app update. -->
-        <receiver
-            android:name=".update.UpdateReceiver"
-            android:exported="false" />
     </application>
 
 </manifest>

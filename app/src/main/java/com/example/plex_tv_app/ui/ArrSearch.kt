@@ -55,7 +55,7 @@ fun ArrResultsRow(title: String, titles: List<ArrTitle>, cardScale: Float, modif
         LazyRow(
             state = rowState,
             contentPadding = PaddingValues(start = 14.dp, top = 10.dp, bottom = 12.dp, end = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
         ) {
             itemsIndexed(titles, key = { i, t -> "${t.title}|${t.year}|$i" }) { i, t ->
                 PosterAddCard(

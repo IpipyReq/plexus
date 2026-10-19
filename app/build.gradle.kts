@@ -5,12 +5,12 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// The app's version. Bump it for every release: the updater only offers a higher version.
+// app's version no. Bump it for every release: the updater only offers a higher version.
 val plexusVersion = "1.0.0"
 // Where the in-app updater looks for new versions: a public GitHub repo whose releases hold the APKs.
 val updateRepo = "IpipyReq/plexus"
 
-// Your signing key, from keystore.properties next to settings.gradle.kts (never committed).
+// signing key, from keystore.properties next to settings.gradle.kts (never committed).
 // Every release must be signed with the same key, or Android refuses to update the app.
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")

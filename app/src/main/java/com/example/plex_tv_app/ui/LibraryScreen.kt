@@ -653,8 +653,8 @@ private fun PosterGrid(
         state = state,
         columns = GridCells.Adaptive(150.dp * cardScale),
         contentPadding = PaddingValues(top = 14.dp, bottom = 40.dp, start = PageMargin, end = 52.dp),
-        horizontalArrangement = Arrangement.spacedBy(22.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(cardGap(22.dp)),
+        verticalArrangement = Arrangement.spacedBy(cardGap(24.dp)),
         modifier = Modifier.fillMaxSize(),
     ) {
         itemsIndexed(List(count) { it }, key = { _, i -> key(i) }) { _, i ->

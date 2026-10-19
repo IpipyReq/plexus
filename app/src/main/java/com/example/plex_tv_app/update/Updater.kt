@@ -1,7 +1,6 @@
 package com.example.plex_tv_app.update
 
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
@@ -148,20 +147,44 @@ object Updater {
                 apk.inputStream().use { it.copyTo(out) }
                 session.fsync(out)
             }
-            val callback = PendingIntent.getBroadcast(
+            // The installer reports back to Plexus's own screen (not a background receiver): only a
+            // visible screen may open the "Update this app?" confirmation, and after Play Protect's
+            // "Install anyway" a background one is silently blocked.
+            val reply = Intent(context, com.example.plex_tv_app.MainActivity::class.java)
+                .setAction(ACTION_INSTALL_STATUS)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val options = if (Build.VERSION.SDK_INT >= 34) {
+                android.app.ActivityOptions.makeBasic()
+                    .setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                    .toBundle()
+            } else null
+            val callback = PendingIntent.getActivity(
                 context,
                 sessionId,
-                Intent(context, UpdateReceiver::class.java),
+                reply,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+                options,
             )
             session.commit(callback.intentSender)
         }
     }
 }
 
-/** Android's installer reports back here: show its confirm screen, or say what went wrong. */
-class UpdateReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
+/** The installer's replies arrive at MainActivity with this action. */
+const val ACTION_INSTALL_STATUS = "com.example.plex_tv_app.INSTALL_STATUS"
+
+/**
+ * Called by MainActivity (a visible screen) with the installer's reply: shows its confirm
+ * screen, or says what went wrong. Returns false if [intent] isn't an installer reply.
+ */
+fun handleInstallStatus(activity: android.app.Activity, intent: Intent?): Boolean {
+    if (intent?.action != ACTION_INSTALL_STATUS) return false
+    InstallStatus.handle(activity, intent)
+    return true
+}
+
+private object InstallStatus {
+    fun handle(context: Context, intent: Intent) {
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 val confirm = if (Build.VERSION.SDK_INT >= 33) {
@@ -169,7 +192,13 @@ class UpdateReceiver : BroadcastReceiver() {
                 } else {
                     @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)
                 }
-                confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { runCatching { context.startActivity(it) } }
+                if (confirm == null) {
+                    Updater.installMessage = "Android didn't send its confirmation screen. Try Install again."
+                } else {
+                    runCatching { context.startActivity(confirm) }.onFailure {
+                        Updater.installMessage = "Couldn't open Android's install screen: ${it.message}"
+                    }
+                }
             }
             PackageInstaller.STATUS_SUCCESS -> Updater.installMessage = "Updated."
             else -> {

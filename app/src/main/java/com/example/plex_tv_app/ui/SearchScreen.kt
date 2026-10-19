@@ -317,7 +317,7 @@ private fun SearchResults(
                     state = rowState,
                     // Room on the left so a highlighted card can grow without being clipped.
                     contentPadding = PaddingValues(start = 14.dp, top = 10.dp, bottom = 12.dp, end = 48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
                 ) {
                     itemsIndexed(hub.items, key = { _, it -> it.ratingKey }) { i, item ->
                         MediaCard(

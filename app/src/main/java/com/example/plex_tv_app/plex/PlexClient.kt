@@ -83,10 +83,24 @@ class PlexClient(context: Context) {
         get() = prefs.getString(KEY_LAST_SERVER, null)
         set(value) = prefs.edit().putString(KEY_LAST_SERVER, value).apply()
 
-    /** Card size on Home and in libraries, saved per profile. Starts at 80%. */
+    /**
+     * One card size for everyone on this TV (Settings → Appearance → "Separate sizes for each
+     * profile" off) instead of one per profile. Switching carries the current size over.
+     */
+    var sharedSizes: Boolean = false
+        set(value) {
+            if (field == value) return
+            val current = cardScale
+            field = value
+            if (!prefs.contains(cardKey())) cardScale = current
+        }
+
+    private fun cardKey() = if (sharedSizes) "card_scale_all" else "card_scale_$profileId"
+
+    /** Card size on Home and in libraries, per profile (or shared, see [sharedSizes]). Starts at 80%. */
     var cardScale: Float
-        get() = prefs.getFloat("card_scale_$profileId", com.example.plex_tv_app.ui.DEFAULT_CARD_SCALE)
-        set(value) = prefs.edit().putFloat("card_scale_$profileId", value).apply()
+        get() = prefs.getFloat(cardKey(), com.example.plex_tv_app.ui.DEFAULT_CARD_SCALE)
+        set(value) = prefs.edit().putFloat(cardKey(), value).apply()
 
     /** Your custom order of Home rows (by PlexHub.rowKey), saved per profile. Empty = Plex's order. */
     var rowOrder: List<String>

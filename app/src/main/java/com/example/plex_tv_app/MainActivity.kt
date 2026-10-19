@@ -58,16 +58,26 @@ private class TextScaledDensity(private val base: Density, private val settings:
 private var splashShownThisRun = false
 
 class MainActivity : ComponentActivity() {
+    // Android's installer replies here during an in-app update (MainActivity is singleTask).
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        com.example.plex_tv_app.update.handleInstallStatus(this, intent)
+    }
+
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val client = PlexClient(applicationContext)
         val settings = AppSettings(applicationContext)
+        settings.useProfile(client.profileId) // text size is per profile
+        client.sharedSizes = !settings.sizesPerProfile // card size: per profile, or one for the TV
 
         // Back with nothing left to go back to: send the app to the background (like Home) instead
         // of closing it, so opening it again is instant and lands where you were. Registered first,
         // so every screen's own Back handling still comes before it.
         onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
+        // Opened by Android's installer during an in-app update (see Updater).
+        com.example.plex_tv_app.update.handleInstallStatus(this, intent)
 
         setContent {
             CompositionLocalProvider(LocalSettings provides settings) {

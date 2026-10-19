@@ -143,7 +143,55 @@ class AppSettings(context: Context) {
     var previewNavOpen by mutableStateOf(false)
 
     /** Size of all text in the app, including title logos (1.0 = normal). */
-    var textScale by floatPref("text_scale", 1f)
+    // Text size is per profile ("text_scale_<profile id>"), or one for the whole TV
+    // ("text_scale_all") when "Separate sizes for each profile" is off. The app says which profile
+    // is in use with useProfile(); until then (and for a new profile) it's the default.
+    private var textProfile = ""
+    private var textScaleState by mutableStateOf(DEFAULT_TEXT_SCALE)
+    private var sizesPerProfilePref by boolPref("sizes_per_profile", true)
+
+    private fun textKey() = if (sizesPerProfilePref) "text_scale_$textProfile" else "text_scale_all"
+    private fun spacingKey() = if (sizesPerProfilePref) "card_spacing_$textProfile" else "card_spacing_all"
+    private var spacingState by mutableStateOf(DEFAULT_CARD_SPACING)
+
+    /** On: each profile has its own card and text size. Off: one of each for everyone on this TV. */
+    var sizesPerProfile: Boolean
+        get() = sizesPerProfilePref
+        set(value) {
+            if (value == sizesPerProfilePref) return
+            val current = textScaleState
+            val currentSpacing = spacingState
+            sizesPerProfilePref = value
+            // Carry the size you're using over, so switching doesn't make the text jump.
+            if (!prefs.contains(textKey())) prefs.edit().putFloat(textKey(), current).apply()
+            textScaleState = prefs.getFloat(textKey(), DEFAULT_TEXT_SCALE)
+            if (!prefs.contains(spacingKey())) prefs.edit().putFloat(spacingKey(), currentSpacing).apply()
+            spacingState = prefs.getFloat(spacingKey(), DEFAULT_CARD_SPACING)
+        }
+
+    /** Switch the per-profile settings (text size) to this profile's. */
+    fun useProfile(profileId: Long) {
+        val key = profileId.toString()
+        if (key == textProfile) return
+        textProfile = key
+        textScaleState = prefs.getFloat(textKey(), DEFAULT_TEXT_SCALE)
+        spacingState = prefs.getFloat(spacingKey(), DEFAULT_CARD_SPACING)
+    }
+
+    /** The gap between cards, as a multiple of the usual gap (per profile, like text size). */
+    var cardSpacing: Float
+        get() = spacingState
+        set(value) {
+            spacingState = value
+            prefs.edit().putFloat(spacingKey(), value).apply()
+        }
+
+    var textScale: Float
+        get() = textScaleState
+        set(value) {
+            textScaleState = value
+            prefs.edit().putFloat(textKey(), value).apply()
+        }
 
     // General
     var clockMode by enumPref("clock_mode", ClockMode.System)
@@ -206,16 +254,25 @@ class AppSettings(context: Context) {
     var insecureConnections by enumPref("insecure_connections", InsecureConnections.SameNetwork)
 
     /** Puts every setting back to its default. */
-    fun resetAll() = all.values.forEach { it.reset() }
+    fun resetAll() {
+        all.values.forEach { it.reset() }
+        textScale = DEFAULT_TEXT_SCALE
+        cardSpacing = DEFAULT_CARD_SPACING
+    }
 
     /** Puts one page's settings back to their defaults (see [Group]). */
-    fun reset(keys: List<String>) = keys.forEach { all[it]?.reset() }
+    fun reset(keys: List<String>) {
+        keys.forEach { all[it]?.reset() }
+        if ("text_scale" in keys) textScale = DEFAULT_TEXT_SCALE // per profile, so not in [all]
+        if ("card_spacing" in keys) cardSpacing = DEFAULT_CARD_SPACING
+    }
 
     /** Which saved keys belong to each Settings page, for its "Reset to defaults" button. */
     object Group {
         val Appearance = listOf("theme", "text_scale", "nav_style")
         val General = listOf("clock_mode", "refresh_interval", "nav_sounds")
         val Home = listOf(
+            "card_spacing",
             "backdrop_motion", "blur_unwatched", "hide_unwatched_summaries", "movie_select", "episode_select",
             "collection_rows", "show_critic_reviews", "show_community_reviews", "hide_nav_bar", "nav_in_details",
             "home_card_text", "card_text", "show_row_titles", "show_home_summary", "peek_next_row",
@@ -340,7 +397,13 @@ data class SubtitlePick(val off: Boolean, val streamId: Long? = null, val langua
     }
 }
 
-const val MIN_TEXT_SCALE = 0.8f
+/** The text size everyone starts with (and "Reset text size" goes back to). */
+const val DEFAULT_TEXT_SCALE = 0.8f
+const val MIN_TEXT_SCALE = 0.6f
+/** Card spacing: 1.0 is the usual gap between cards. */
+const val DEFAULT_CARD_SPACING = 1f
+const val MIN_CARD_SPACING = 0.5f
+const val MAX_CARD_SPACING = 2f
 const val MAX_TEXT_SCALE = 1.4f
 
 /** Subtitle text size as a multiple of normal. */

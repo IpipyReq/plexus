@@ -46,6 +46,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -245,6 +246,11 @@ fun Shell(
 
     // Auto-refresh: on the interval chosen in Settings while the app is open...
     val settings = LocalSettings.current
+    // "Separate sizes for each profile" switched: use the card size for the new choice.
+    LaunchedEffect(settings.sizesPerProfile) {
+        client.sharedSizes = !settings.sizesPerProfile
+        cardScale = client.cardScale
+    }
     LaunchedEffect(api, settings.refreshInterval) {
         val minutes = settings.refreshInterval.minutes
         if (minutes <= 0) return@LaunchedEffect
@@ -468,6 +474,8 @@ fun Shell(
     val gridMemories = remember(api, visit) { mutableMapOf<String, GridMemory>() }
     val collectionsMemory = remember(api, visit) { CollectionsMemory() }
     val libraryMemories = remember(api, visit) { mutableMapOf<String, LibraryMemory>() }
+    // Per-profile settings (text size) follow whoever's signed in.
+    SideEffect { settings.useProfile(client.profileId) }
     val discoverMemory = remember(api) { DiscoverMemory() }
     val plexDiscover = remember(client) { com.example.plex_tv_app.plex.PlexDiscover(client) }
     val searchMemory = remember(api) { SearchMemory() } // the search survives going in and out of results

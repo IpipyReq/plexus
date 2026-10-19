@@ -44,8 +44,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalView
@@ -220,6 +225,12 @@ fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory,
     var searchOpen by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf<Pair<String, String>?>(null) } // row key → title
 
+    // Pressing Up from the rows always lands on the filter you're using (never a neighbour, which
+    // would switch filters as it's highlighted). Set just before focus moves up, cleared a frame later.
+    val chipRequesters = remember { DiscoverFilter.entries.associateWith { FocusRequester() } }
+    val enteringChips = remember { mutableStateOf(false) }
+    val chipScope = rememberCoroutineScope()
+
     Column(Modifier.fillMaxSize().padding(top = 28.dp)) {
         // Title, filters and search.
         Text("Discover", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 48.dp))
@@ -228,26 +239,54 @@ fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory,
         Row(Modifier.padding(start = 48.dp, end = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             DiscoverFilter.entries.forEach { f ->
                 // Highlighting a filter applies it straight away.
-                Chip(f.label, selected = memory.filter == f, onFocused = {
-                    if (memory.filter != f) {
-                        memory.filter = f
-                        memory.focusedRow = 0
-                    }
-                }) {}
+                Chip(
+                    f.label,
+                    selected = memory.filter == f,
+                    // Coming up from the rows, only the current filter can take focus, so it lands
+                    // there directly (no other filter is highlighted on the way, which would switch it).
+                    modifier = Modifier
+                        .focusRequester(chipRequesters.getValue(f))
+                        .focusProperties { canFocus = !enteringChips.value || memory.filter == f },
+                    onFocused = {
+                        enteringChips.value = false
+                        if (memory.filter != f) {
+                            memory.filter = f
+                            memory.focusedRow = 0
+                        }
+                    },
+                ) {}
                 Spacer(Modifier.width(8.dp))
             }
             Spacer(Modifier.width(12.dp))
-            Chip(if (memory.query.isBlank()) "⌕  Search" else "⌕  ${memory.query}", selected = memory.query.isNotBlank()) {
+            Chip(
+                if (memory.query.isBlank()) "⌕  Search" else "⌕  ${memory.query}",
+                selected = memory.query.isNotBlank(),
+                modifier = Modifier.focusProperties { canFocus = !enteringChips.value },
+            ) {
                 searchOpen = true
             }
             if (memory.query.isNotBlank()) {
                 Spacer(Modifier.width(8.dp))
-                Chip("✕  Clear", selected = false) { memory.query = "" }
+                Chip("✕  Clear", selected = false, modifier = Modifier.focusProperties { canFocus = !enteringChips.value }) { memory.query = "" }
             }
         }
         Spacer(Modifier.height(14.dp))
 
-        Box(Modifier.fillMaxWidth().weight(1f)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .onPreviewKeyEvent { e ->
+                    if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                        enteringChips.value = true
+                        chipScope.launch {
+                            withFrameNanos { }
+                            enteringChips.value = false
+                        }
+                    }
+                    false // only watching; the move itself happens as normal
+                },
+        ) {
             when {
                 source == DiscoverSource.Tmdb && tmdb == null ->
                     DiscoverNote("Add a TMDB key in Settings → Server, or switch Discover to Plex there.")
@@ -466,8 +505,8 @@ private fun ExpandedRow(
                         state = gridState,
                         columns = GridCells.Adaptive(140.dp * cardScale),
                         contentPadding = PaddingValues(top = 20.dp, bottom = 40.dp, start = 48.dp, end = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(22.dp),
-                        verticalArrangement = Arrangement.spacedBy(22.dp),
+                        horizontalArrangement = Arrangement.spacedBy(cardGap(22.dp)),
+                        verticalArrangement = Arrangement.spacedBy(cardGap(22.dp)),
                     ) {
                         gridItemsIndexed(list, key = { i, t -> "${t.kind}:${t.plexId ?: t.id}:$i" }) { i, t ->
                             val keys = t.libraryKeys()
@@ -522,10 +561,10 @@ private fun CentreSpinner() {
 
 /** A filter or search button at the top. */
 @Composable
-private fun Chip(label: String, selected: Boolean, onFocused: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.height(34.dp).onFocusChanged { if (it.isFocused) onFocused?.invoke() },
+        modifier = modifier.height(34.dp).onFocusChanged { if (it.isFocused) onFocused?.invoke() },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = ClickableSurfaceDefaults.colors(
@@ -589,7 +628,7 @@ internal fun TmdbRowView(
         LazyRow(
             state = rowState,
             contentPadding = PaddingValues(start = startPad, top = 10.dp, bottom = 12.dp, end = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
         ) {
             itemsIndexed(titles, key = { i, t -> "${t.kind}:${t.plexId ?: t.id}:$i" }) { i, t ->
                 val keys = t.libraryKeys()
@@ -803,7 +842,7 @@ private fun QueueRow(items: List<com.example.plex_tv_app.arr.QueueItem>, cardSca
         LazyRow(
             state = rowState,
             contentPadding = PaddingValues(start = 14.dp, top = 10.dp, bottom = 12.dp, end = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(cardGap(16.dp)),
         ) {
             itemsIndexed(items, key = { _, q -> "${q.kind}:${q.id}" }) { i, q ->
                 QueueCard(q, Modifier.width(118.dp * cardScale), Modifier.glideIntoView(rowState, i)) { open = q }

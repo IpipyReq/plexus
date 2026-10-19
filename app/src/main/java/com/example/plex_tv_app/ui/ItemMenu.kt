@@ -345,6 +345,8 @@ private fun CustomisePage(
     Spacer(Modifier.height(10.dp))
     val settings = LocalSettings.current
     TextSizeSlider(settings.textScale, { settings.textScale = it })
+    Spacer(Modifier.height(10.dp))
+    SpacingSlider(settings.cardSpacing, { settings.cardSpacing = it })
 
     if (rows != null) {
         Spacer(Modifier.height(20.dp))
@@ -394,7 +396,8 @@ private fun CustomisePage(
         MenuAction("Reset to Plex's order", onClick = onResetRows)
     }
     MenuAction("Reset card size") { onCardScale(DEFAULT_CARD_SCALE) }
-    MenuAction("Reset text size") { settings.textScale = 1f }
+    MenuAction("Reset text size") { settings.textScale = com.example.plex_tv_app.settings.DEFAULT_TEXT_SCALE }
+    MenuAction("Reset card spacing") { settings.cardSpacing = com.example.plex_tv_app.settings.DEFAULT_CARD_SPACING }
     MenuAction("Done", onClick = onDone)
 }
 
@@ -457,6 +460,15 @@ val LocalSliderFocus = androidx.compose.runtime.staticCompositionLocalOf<android
 @Composable
 internal fun SizeSlider(value: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier) =
     ScaleSlider("Card size", value, MIN_CARD_SCALE, MAX_CARD_SCALE, onChange, modifier)
+
+/** The gap between cards. */
+@Composable
+internal fun SpacingSlider(value: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier) =
+    ScaleSlider(
+        "Card spacing", value,
+        com.example.plex_tv_app.settings.MIN_CARD_SPACING, com.example.plex_tv_app.settings.MAX_CARD_SPACING,
+        onChange, modifier,
+    )
 
 /** The text size slider (all text in the app, and title logos). */
 @Composable
