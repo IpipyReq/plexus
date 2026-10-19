@@ -872,6 +872,16 @@ private fun AboutPage(client: PlexClient, api: PlexServerApi, s: AppSettings) {
     SettingsSection("This app")
     InfoSetting("App", "Plexus")
     InfoSetting("Version", appVersion)
+
+    SettingsSection("Updates")
+    CheckForUpdatesSetting()
+    ToggleSetting(
+        "Check for updates automatically",
+        "When Plexus starts, look for a new version and offer it.",
+        s.autoCheckUpdates,
+    ) { s.autoCheckUpdates = it }
+
+    SettingsSection("This TV")
     InfoSetting("Device", "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}")
     InfoSetting("Android", Build.VERSION.RELEASE)
     InfoSetting("Device ID", client.clientId.take(8))

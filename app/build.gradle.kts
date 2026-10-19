@@ -1,6 +1,20 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// The app's version. Bump it for every release: the updater only offers a higher version.
+val plexusVersion = "1.0.0"
+// Where the in-app updater looks for new versions: a public GitHub repo whose releases hold the APKs.
+val updateRepo = "IpipyReq/plexus"
+
+// Your signing key, from keystore.properties next to settings.gradle.kts (never committed).
+// Every release must be signed with the same key, or Android refuses to update the app.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -13,15 +27,28 @@ android {
         applicationId = "com.example.plex_tv_app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        // 1.2.3 → 10203, so each release's code is higher than the last.
+        versionCode = plexusVersion.split(".").map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
+        versionName = plexusVersion
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
 
+    }
+
+    signingConfigs {
+        if (keystoreProps.getProperty("storeFile") != null) {
+            create("plexus") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            // Temporary: sign release with the debug key so it installs from Android Studio.
-            signingConfig = signingConfigs.getByName("debug")
+            // Your "plexus" key if keystore.properties is set up, else the debug key (this PC only).
+            signingConfig = signingConfigs.findByName("plexus") ?: signingConfigs.getByName("debug")
             optimization {
                 enable = true
             }
@@ -33,6 +60,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

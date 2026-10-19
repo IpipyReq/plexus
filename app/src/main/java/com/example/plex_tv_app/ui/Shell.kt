@@ -591,6 +591,7 @@ fun Shell(
         }
 
         Clock(Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 36.dp))
+        AutoUpdateCheck()
 
         if (!navBlocked) {
             SideNav(

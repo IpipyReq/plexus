@@ -254,6 +254,10 @@ class AppSettings(context: Context) {
     var moreLikeThis by boolPref("more_like_this", true)
     /** Off: only the server's owner gets Discover, adding titles and download status. On: everyone on this TV. */
     var shareDiscover by boolPref("share_discover", false)
+
+    // In-app updates (Settings → About).
+    var autoCheckUpdates by boolPref("auto_check_updates", true)
+    var skippedUpdate by stringPref("skipped_update", "")
     /** May this profile use Discover, add titles, and see/act on downloads? */
     fun canDownload(owner: Boolean): Boolean = owner || shareDiscover
     /** Episodes still to air, at the end of a show's latest season (needs TMDB or Sonarr). */
