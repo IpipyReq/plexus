@@ -1,0 +1,30 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Kept out of the repository
+/app/release/
+/app/debug/
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
+# Android Studio files that record your devices (TV serial numbers)
+/.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
+/.idea/deploymentTargets.xml
+/.idea/other.xml
+/.kotlin

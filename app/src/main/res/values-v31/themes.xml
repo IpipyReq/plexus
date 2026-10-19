@@ -1,0 +1,9 @@
+<resources>
+
+    <!-- Android 12+: the system launch splash shows the Plexus mark, which the app's own splash then continues. -->
+    <style name="Theme.PlexTVApp" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/plexus_mark</item>
+    </style>
+</resources>

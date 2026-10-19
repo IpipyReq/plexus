@@ -1,0 +1,4 @@
+<resources>
+    <!-- Behind the launch splash (and the window before the app draws), so there's no white flash. -->
+    <color name="splash_background">#FF0E0F13</color>
+</resources>
