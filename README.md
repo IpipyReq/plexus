@@ -1,8 +1,5 @@
 <h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
-    <img src="docs/logo-light.png" alt="Plexus" height="96">
-  </picture>
+  <img src="docs/logo.png" alt="Plexus" height="110">
 </h1>
 
 Plex client for Google TV and Android TV, built with Kotlin and Jetpack Compose for TV.
