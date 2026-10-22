@@ -807,20 +807,24 @@ internal fun MoreLikeThis(api: PlexServerApi, d: PlexDetails, modifier: Modifier
             }
         }.getOrDefault(emptyList())
     }
-    val library by produceState(emptyMap<String, PlexItem>(), api) {
+    // Null until loaded: the row waits for it, so titles you already have never flash up first.
+    val library by produceState<Map<String, PlexItem>?>(null, api) {
         value = runCatching { api.libraryByExternalId() }.getOrDefault(emptyMap())
     }
     val tracked by produceState(emptySet<String>(), api) {
         if (settings.canDownload(api.canManage)) value = ArrTracked.get(settings)
     }
     val added = remember { mutableStateMapOf<String, Boolean>() }
-    if (titles.isEmpty()) return
+    val owned = library ?: return
+    // Only things you don't have yet: anything already in your library is left out.
+    val notOwned = remember(titles, owned) { titles.filter { t -> t.libraryKeys().none { it in owned } } }
+    if (notOwned.isEmpty()) return
     Column(Modifier.fillMaxWidth()) {
         TmdbRowView(
             title = "More like this",
-            titles = titles,
+            titles = notOwned,
             cardScale = 1f,
-            library = library,
+            library = owned,
             added = added,
             canManage = LocalSettings.current.canDownload(api.canManage),
             modifier = modifier,

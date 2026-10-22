@@ -6,7 +6,11 @@ plugins {
 }
 
 // app's version no. Bump it for every release: the updater only offers a higher version.
-val plexusVersion = "1.0.0"
+val plexusVersion = "1.0.2"
+// 1.2.3 → 10203, so each release's code is higher than the last.
+val plexusVersionCode: Int = plexusVersion.split(".").let { parts ->
+    parts[0].toInt() * 10000 + parts[1].toInt() * 100 + parts[2].toInt()
+}
 // Where the in-app updater looks for new versions: a public GitHub repo whose releases hold the APKs.
 val updateRepo = "IpipyReq/plexus"
 
@@ -27,8 +31,7 @@ android {
         applicationId = "com.example.plex_tv_app"
         minSdk = 29
         targetSdk = 37
-        // 1.2.3 → 10203, so each release's code is higher than the last.
-        versionCode = plexusVersion.split(".").map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
+        versionCode = plexusVersionCode
         versionName = plexusVersion
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
 

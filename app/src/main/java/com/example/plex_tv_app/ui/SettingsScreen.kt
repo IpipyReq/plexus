@@ -65,6 +65,7 @@ import com.example.plex_tv_app.settings.Labeled
 import com.example.plex_tv_app.plex.PlexLibrary
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.produceState
 import com.example.plex_tv_app.plex.PlexServerApi
 import com.example.plex_tv_app.settings.AppIcon
@@ -141,6 +142,9 @@ fun SettingsScreen(
     val initialFocusDone = remember { mutableStateOf(false) }
 
     val chain = remember { FocusChain() }
+    // The open page's scroll, so Right from the categories can start it at the top.
+    val pageScroll = remember { mutableStateOf<ScrollState?>(null) }
+    val pageScope = rememberCoroutineScope()
     val sliderFocused = remember { mutableStateOf(false) } // a slider (card/text size) is highlighted
     var landAt by remember { mutableStateOf<Edge?>(null) } // where to land on the page just opened
     var holdFocus by remember { mutableStateOf(false) } // the pane keeps focus while pages swap
@@ -188,6 +192,14 @@ fun SettingsScreen(
                 slide = slideHighlight,
                 onStep = { wrapped -> slideHighlight = wrapped },
                 onFocused = { category = it },
+                // Right: into the page at its top (not whichever row happens to be level with you).
+                onRight = {
+                    pageScope.launch {
+                        runCatching { pageScroll.value?.scrollTo(0) }
+                        withFrameNanos { }
+                        runCatching { chain.rows.firstOrNull()?.requestFocus() }
+                    }
+                },
                 modifier = Modifier.width(230.dp),
             )
             RequestInitialFocus(categoryFocus.getValue(start), initialFocusDone)
@@ -240,6 +252,7 @@ fun SettingsScreen(
                         // Arriving from below (Up past the top of the next page)? Start this page
                         // scrolled to the bottom, so there's no visible scroll down to its last row.
                         val scroll = remember { ScrollState(if (landAt == Edge.Bottom) Int.MAX_VALUE else 0) }
+                        SideEffect { pageScroll.value = scroll }
                         Column(
                             Modifier
                                 .fillMaxSize()
@@ -292,6 +305,7 @@ private fun CategoryList(
     slide: Boolean,
     onStep: (wrapped: Boolean) -> Unit,
     onFocused: (Category) -> Unit,
+    onRight: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var listFocused by remember { mutableStateOf(false) }
@@ -321,6 +335,7 @@ private fun CategoryList(
                 val direction = when (e.nativeKeyEvent.keyCode) {
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> 1
                     AndroidKeyEvent.KEYCODE_DPAD_UP -> -1
+                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> { onRight(); return@onPreviewKeyEvent true }
                     else -> return@onPreviewKeyEvent false
                 }
                 val nextIndex = index + direction

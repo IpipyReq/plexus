@@ -239,6 +239,9 @@ private fun MovieDetails(
                     .onFocusChanged { onFirstScreen = it.hasFocus }
                     .padding(top = 40.dp, bottom = 20.dp),
             ) {
+                // The space goes above the title, so the title, details and buttons sit just over
+                // the row below (like the episode page) instead of up in the corner.
+                Spacer(Modifier.weight(1f))
                 Column(Modifier.padding(horizontal = SidePad).width(640.dp)) {
                     TitleBlock(movie, logo, baseHeight = 80.dp)
                     Spacer(Modifier.height(12.dp))
@@ -298,8 +301,8 @@ private fun MovieDetails(
                     RequestInitialFocus(play, focused)
                 }
 
-                Spacer(Modifier.weight(1f))
                 if (d.cast.isNotEmpty()) {
+                    Spacer(Modifier.height(28.dp))
                     SectionTitle("Cast")
                     CastRow(d)
                 }
@@ -625,6 +628,8 @@ private fun ShowOverview(
                     .onFocusChanged { onFirstScreen = it.hasFocus }
                     .padding(top = 36.dp, bottom = 12.dp),
             ) {
+                // As on the movie page: the title block sits just over the seasons row.
+                Spacer(Modifier.weight(1f))
                 Column(Modifier.padding(horizontal = SidePad).width(640.dp)) {
                     TitleBlock(show, logo, baseHeight = 64.dp)
                     Spacer(Modifier.height(10.dp))
@@ -677,9 +682,9 @@ private fun ShowOverview(
                     if (!returning) RequestInitialFocus(play, focused)
                 }
 
-                Spacer(Modifier.weight(1f))
                 val list = seasons.orEmpty()
                 if (list.isNotEmpty()) {
+                    Spacer(Modifier.height(24.dp))
                     SectionTitle(if (list.size == 1) "Season" else "Seasons")
                     LazyRow(
                         state = seasonsState,
