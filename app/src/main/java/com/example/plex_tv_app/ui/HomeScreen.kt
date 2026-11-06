@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -78,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.example.plex_tv_app.arr.QueueItem
 import com.example.plex_tv_app.plex.PlexHub
 import com.example.plex_tv_app.plex.PlexItem
 import com.example.plex_tv_app.plex.PlexServerApi
@@ -185,12 +187,13 @@ fun HomeScreen(
     entry: FocusRequester? = null, // also attached to the current row's card, for the page around it
     focusOnStart: Boolean = true, // take focus when first shown
     onFocusInfo: ((row: Int, column: Int) -> Unit)? = null, // which row/card is highlighted
+    downloads: Map<String, QueueItem> = emptyMap(), // the Downloading row's cards, by their item's ratingKey
 ) {
     when {
         error != null -> Message("Couldn't load Home. $error")
         hubs == null -> Message("Loading…")
         hubs.isEmpty() -> Message("Add movies or TV shows to a library on your server and they'll appear here.")
-        else -> HeroHome(api, hubs, cardScale, rowStyles, onOpen, onLongPress, memory, topInset, entry, focusOnStart, onFocusInfo)
+        else -> HeroHome(api, hubs, cardScale, rowStyles, onOpen, onLongPress, memory, topInset, entry, focusOnStart, onFocusInfo, downloads)
     }
 }
 
@@ -207,6 +210,7 @@ private fun HeroHome(
     entry: FocusRequester?,
     focusOnStart: Boolean,
     onFocusInfo: ((Int, Int) -> Unit)?,
+    downloads: Map<String, QueueItem>,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -232,7 +236,7 @@ private fun HeroHome(
         val item = focusedItem ?: return@LaunchedEffect
         if (hero?.item?.ratingKey == item.ratingKey) return@LaunchedEffect // already showing (e.g. coming back)
         delay(160)
-        hero = Hero(item, api.logoUrlFor(item)).also { memory.hero = it }
+        hero = Hero(item, if (item.ratingKey in downloads) null else api.logoUrlFor(item)).also { memory.hero = it }
     }
 
     // Settings → Home & browsing → the minimal-look options.
@@ -270,6 +274,13 @@ private fun HeroHome(
             if (result.isSuccess && (result.getOrNull() as Any?) != false) return@LaunchedEffect
             withFrameNanos { } // the row's cards may not be laid out yet
         }
+    }
+
+    // A finished download leaves its row; if you were on it, the highlight moves to its neighbour.
+    LaunchedEffect(current.items.size) {
+        if (current.id != DownloadsHubId || current.items.any { it.ratingKey == focusedItem?.ratingKey }) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { requesterOf(selectedKey).requestFocus() }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -339,7 +350,7 @@ private fun HeroHome(
                         listState = stateOf(hub.rowKey),
                         requester = requesterOf(hub.rowKey),
                         extraEntry = if (hub.rowKey == current.rowKey) entry else null,
-                        rememberedIndex = lastIndex[hub.rowKey] ?: 0,
+                        rememberedIndex = (lastIndex[hub.rowKey] ?: 0).coerceAtMost(hub.items.lastIndex),
                         onCardFocused = { i, item ->
                             lastIndex[hub.rowKey] = i
                             onFocusInfo?.invoke(hubs.indexOfFirst { it.rowKey == hub.rowKey }, i)
@@ -352,6 +363,7 @@ private fun HeroHome(
                         onLongPress = onLongPress,
                         cardText = cardText,
                         showTitle = rowTitles,
+                        downloads = downloads,
                     )
                 }
             }
@@ -377,7 +389,9 @@ private fun HubRow(
     onLongPress: (PlexItem, String, () -> Unit) -> Unit,
     cardText: CardText,
     showTitle: Boolean,
+    downloads: Map<String, QueueItem>,
 ) {
+    var openDownload by remember { mutableStateOf<QueueItem?>(null) }
     val alpha by animateFloatAsState(if (isCurrent) 1f else 0.5f, tween(300), label = "rowAlpha")
     Column(
         Modifier
@@ -402,23 +416,37 @@ private fun HubRow(
         ) {
             // Keyed by item, so a refresh that shifts things along keeps your highlight on the same title.
             itemsIndexed(hub.items, key = { _, item -> item.ratingKey }) { i, item ->
-                MediaCard(
-                    api = api,
-                    item = item,
-                    style = style,
-                    standalone = true,
-                    onClick = { onOpen(item) },
-                    onFocused = { onCardFocused(i, item) },
-                    onLongClick = { restore -> onLongPress(item, hub.rowKey, restore) },
-                    modifier = Modifier.width(cardWidth(style, cardScale)),
-                    cardModifier = (
-                        if (i == rememberedIndex) {
-                            Modifier.focusRequester(requester).let { m -> if (extraEntry != null) m.focusRequester(extraEntry) else m }
-                        } else Modifier
-                    ).glideIntoView(listState, i),
-                )
+                val cardModifier = (
+                    if (i == rememberedIndex) {
+                        Modifier.focusRequester(requester).let { m -> if (extraEntry != null) m.focusRequester(extraEntry) else m }
+                    } else Modifier
+                ).glideIntoView(listState, i)
+                val download = downloads[item.ratingKey]
+                if (download != null) {
+                    QueueCard(
+                        download,
+                        Modifier.width(cardWidth(style, cardScale)),
+                        cardModifier.onFocusChanged { if (it.isFocused) onCardFocused(i, item) },
+                    ) { openDownload = download }
+                } else {
+                    MediaCard(
+                        api = api,
+                        item = item,
+                        style = style,
+                        standalone = true,
+                        onClick = { onOpen(item) },
+                        onFocused = { onCardFocused(i, item) },
+                        onLongClick = { restore -> onLongPress(item, hub.rowKey, restore) },
+                        modifier = Modifier.width(cardWidth(style, cardScale)),
+                        cardModifier = cardModifier,
+                    )
+                }
             }
         }
+    }
+    openDownload?.let { q ->
+        // Keep the panel's numbers live as the queue refreshes.
+        QueuePanel(downloads[q.rowItemKey] ?: q) { openDownload = null }
     }
 }
 

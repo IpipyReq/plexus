@@ -260,6 +260,7 @@ private fun MovieDetails(
                     }
                     Credits(d)
                     Spacer(Modifier.height(18.dp))
+                    DownloadStatus(api, d)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         val offset = movie.viewOffset
                         val duration = movie.duration
@@ -644,6 +645,7 @@ private fun ShowOverview(
                     }
                     Credits(d)
                     Spacer(Modifier.height(14.dp))
+                    DownloadStatus(api, d)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         val next = upNext
                         val label = when {
@@ -1484,6 +1486,27 @@ private fun Credits(d: PlexDetails) {
     if (lines.isEmpty()) return
     Spacer(Modifier.height(8.dp))
     lines.forEach { Text(it, fontSize = 13.sp, color = palette.muted, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+/**
+ * Above a title's buttons, while something of it is downloading: its progress, and OK opens the
+ * details. Only for people who can see downloads, and it updates as the queue does.
+ */
+@Composable
+private fun DownloadStatus(api: PlexServerApi, d: PlexDetails) {
+    val downloads = LocalDownloads.current ?: return
+    if (!LocalSettings.current.canDownload(api.canManage)) return
+    KeepDownloadsFresh(api, downloads)
+    val kind = if (d.item.type == "show") "show" else "movie"
+    val keys = remember(d) {
+        d.externalIds.map { (scheme, id) -> "$scheme:$kind:$id" } + com.example.plex_tv_app.arr.titleKey(kind, d.item.title, d.item.year)
+    }
+    val queue = downloadsOf(keys)
+    val status = queue.statusLine() ?: return
+    var open by remember { mutableStateOf(false) }
+    PillButton(status, "↓", compact = true) { open = true }
+    Spacer(Modifier.height(10.dp))
+    if (open) DownloadsPanel(queue) { open = false }
 }
 
 /** A rounded button. The primary one (Play) uses the theme's accent; all go bright when highlighted. */

@@ -63,6 +63,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.example.plex_tv_app.arr.ArrKind
 import com.example.plex_tv_app.plex.PlexCategory
 import com.example.plex_tv_app.plex.PlexCollection
 import com.example.plex_tv_app.plex.PlexHub
@@ -135,6 +136,7 @@ fun LibraryScreen(
     onOpenCollection: (PlexCollection) -> Unit,
     onOpenCategory: (PlexCategory) -> Unit,
     onLongPress: (PlexItem, () -> Unit) -> Unit,
+    downloads: DownloadQueue,
     rowOrder: List<String> = emptyList(), // Recommended's rows, in your order (see Customise Rows)
     rowStyles: Map<String, CardStyle> = emptyMap(), // Recommended's row styles
     onRowLongPress: ((PlexItem, rowKey: String, () -> Unit) -> Unit)? = null, // hold OK on a Recommended card
@@ -209,6 +211,7 @@ fun LibraryScreen(
                 },
                 onOpen = onOpen,
                 onLongPress = onLongPress,
+                downloads = downloads,
                 rowOrder = rowOrder,
                 rowStyles = rowStyles,
                 onRowLongPress = onRowLongPress,
@@ -332,10 +335,12 @@ private fun RecommendedHome(
     onReport: (row: Int, column: Int) -> Unit,
     onOpen: (PlexItem) -> Unit,
     onLongPress: (PlexItem, () -> Unit) -> Unit,
+    downloads: DownloadQueue,
     rowOrder: List<String>,
     rowStyles: Map<String, CardStyle>,
     onRowLongPress: ((PlexItem, String, () -> Unit) -> Unit)?,
 ) {
+    KeepDownloadsFresh(api, downloads)
     var hubs by remember { mutableStateOf(memory.recommendedHubs) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(library.key, reloadToken) {
@@ -349,7 +354,15 @@ private fun RecommendedHome(
             if (hubs == null) error = e.message ?: e.toString()
         }
     }
-    val list = remember(hubs, rowOrder) { hubs?.let { orderRows(it, rowOrder) } }
+    // Only this library's kind. The queue refreshing just changes this row; the others stay as loaded.
+    val kind = when (library.type) {
+        "movie" -> ArrKind.Movie
+        "show" -> ArrKind.Show
+        else -> null
+    }
+    val queue = downloads.items.filter { it.kind == kind }
+    val ordered = remember(hubs, rowOrder) { hubs?.let { orderRows(it, rowOrder) } }
+    val list = remember(ordered, queue) { ordered?.let { withDownloads(it, queue) } }
     when {
         error != null -> Box(Modifier.padding(top = 90.dp)) { TabNote("Couldn't load recommendations. $error") }
         list == null -> Box(Modifier.padding(top = 90.dp)) { TabNote("Loading…") }
@@ -369,6 +382,7 @@ private fun RecommendedHome(
             entry = entry,
             focusOnStart = focusOnStart,
             onFocusInfo = onReport,
+            downloads = remember(queue) { queue.associateBy { it.rowItemKey } },
         )
     }
 }

@@ -2,7 +2,11 @@
 
 package com.example.plex_tv_app.ui
 
+import android.content.Intent
+import android.speech.RecognizerIntent
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -12,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +49,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -50,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -70,6 +79,20 @@ import com.example.plex_tv_app.settings.LocalSettings
 /** What you've typed, kept by the Shell so Back from a result returns to the same search. */
 class SearchMemory {
     var query by mutableStateOf("")
+
+    fun type(c: Char) {
+        if (query.length < 60) query += c
+    }
+    fun backspace() {
+        query = query.dropLast(1)
+    }
+}
+
+/** Saves [query] to your recent searches and returns the new list. */
+internal fun PlexClient.rememberSearch(query: String): List<String> {
+    val q = query.trim()
+    if (q.isNotEmpty()) recentSearches = (listOf(q) + recentSearches.filterNot { it.equals(q, ignoreCase = true) }).take(8)
+    return recentSearches
 }
 
 private val KeyRows = listOf("abcdef", "ghijkl", "mnopqr", "stuvwx", "yz1234", "567890")
@@ -153,70 +176,31 @@ fun SearchScreen(
         }
     }
 
-    fun type(c: Char) {
-        if (memory.query.length < 60) memory.query += c
-    }
-    fun backspace() {
-        memory.query = memory.query.dropLast(1)
-    }
     fun openResult(item: PlexItem) {
-        val q = memory.query.trim()
-        if (q.isNotEmpty()) {
-            recent = (listOf(q) + recent.filterNot { it.equals(q, ignoreCase = true) }).take(8)
-            client.recentSearches = recent
-        }
+        recent = client.rememberSearch(memory.query)
         onOpen(item)
     }
 
     val firstKey = remember { FocusRequester() }
     val initialDone = remember { mutableStateOf(false) }
+    // What's in your library first, then what Radarr and Sonarr found.
+    val suggestions = remember(results, arrMovies, arrShows, query) {
+        val library = results.orEmpty().flatMap { it.items }.filter { it.type == "movie" || it.type == "show" }.map { it.title }
+        (library + (arrMovies + arrShows).map { it.title }).suggestionsFor(query)
+    }
 
     Column(
         Modifier
             .fillMaxSize()
             .padding(start = 48.dp, end = 0.dp, top = 28.dp)
-            // Typing on a real keyboard (or a remote with a keyboard) goes straight into the search.
-            .onPreviewKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val code = e.nativeKeyEvent.keyCode
-                when {
-                    code == AndroidKeyEvent.KEYCODE_DEL -> { backspace(); true }
-                    code == AndroidKeyEvent.KEYCODE_SPACE -> { type(' '); true }
-                    else -> {
-                        val ch = e.nativeKeyEvent.unicodeChar.toChar()
-                        if (ch.isLetterOrDigit()) { type(ch.lowercaseChar()); true } else false
-                    }
-                }
-            },
+            .searchTyping(memory),
     ) {
         Text("Search", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(14.dp))
 
         Row(Modifier.fillMaxSize()) {
-            // ---- Keyboard ----
-            Column(Modifier.width(KeyWidth * 6 + KeyGap * 5)) {
-                QueryBox(query, searching)
-                Spacer(Modifier.height(14.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(KeyGap)) {
-                    KeyRows.forEachIndexed { r, row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(KeyGap)) {
-                            row.forEachIndexed { c, ch ->
-                                Key(
-                                    label = ch.uppercase(),
-                                    width = KeyWidth,
-                                    modifier = if (r == 0 && c == 0) Modifier.focusRequester(firstKey) else Modifier,
-                                ) { type(ch) }
-                            }
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(KeyGap)) {
-                        Key("Space", width = KeyWidth * 3 + KeyGap * 2, small = true) { type(' ') }
-                        Key("⌫", width = KeyWidth * 2 + KeyGap) { backspace() }
-                        Key("Clear", width = KeyWidth, small = true) { memory.query = "" }
-                    }
-                }
-                RequestInitialFocus(firstKey, initialDone)
-            }
+            SearchKeyboard(memory, searching, firstKey, suggestions = suggestions)
+            RequestInitialFocus(firstKey, initialDone)
 
             Spacer(Modifier.width(18.dp))
 
@@ -231,6 +215,157 @@ fun SearchScreen(
                     else -> SearchResults(api, list.orEmpty(), cardScale, ::openResult, onLongPress, arrRows)
                 }
             }
+        }
+    }
+}
+
+/** Typing on a real keyboard (or a remote with a keyboard) goes straight into the search. */
+internal fun Modifier.searchTyping(memory: SearchMemory): Modifier = onPreviewKeyEvent { e ->
+    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    val code = e.nativeKeyEvent.keyCode
+    when {
+        code == AndroidKeyEvent.KEYCODE_DEL -> { memory.backspace(); true }
+        code == AndroidKeyEvent.KEYCODE_SPACE -> { memory.type(' '); true }
+        else -> {
+            val ch = e.nativeKeyEvent.unicodeChar.toChar()
+            if (ch.isLetterOrDigit()) { memory.type(ch.lowercaseChar()); true } else false
+        }
+    }
+}
+
+/** What you've typed, above the on-screen keyboard. [firstKey] goes on its first key. */
+@Composable
+internal fun SearchKeyboard(
+    memory: SearchMemory,
+    searching: Boolean,
+    firstKey: FocusRequester,
+    modifier: Modifier = Modifier,
+    keyModifier: Modifier = Modifier, // on every key and suggestion
+    suggestions: List<String> = emptyList(),
+) {
+    val context = LocalContext.current
+    val speech = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Say a title")
+    }
+    val canListen = remember { speech.resolveActivity(context.packageManager) != null }
+    val listen = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { memory.query = it.take(60) }
+    }
+    Column(modifier.width(KeyWidth * 6 + KeyGap * 5)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { QueryBox(memory.query, searching) }
+            if (canListen) {
+                Spacer(Modifier.width(KeyGap))
+                MicButton(keyModifier) { runCatching { listen.launch(speech) } }
+            }
+        }
+        // The space is always there, so the keys don't jump as suggestions come and go.
+        // One line, as many as fit the width of the box; the rest aren't shown.
+        Spacer(Modifier.height(10.dp))
+        FlowRow(Modifier.fillMaxWidth().height(34.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), maxLines = 1) {
+            suggestions.forEach { title ->
+                key(title) {
+                    Suggestion(title, keyModifier) {
+                        memory.query = title
+                        runCatching { firstKey.requestFocus() } // this button goes once it's picked
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(KeyGap)) {
+            KeyRows.forEachIndexed { r, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(KeyGap)) {
+                    row.forEachIndexed { c, ch ->
+                        Key(
+                            label = ch.uppercase(),
+                            width = KeyWidth,
+                            modifier = if (r == 0 && c == 0) keyModifier.focusRequester(firstKey) else keyModifier,
+                        ) { memory.type(ch) }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(KeyGap)) {
+                Key("Space", width = KeyWidth * 3 + KeyGap * 2, modifier = keyModifier, small = true) { memory.type(' ') }
+                Key("⌫", width = KeyWidth * 2 + KeyGap, modifier = keyModifier) { memory.backspace() }
+                Key("Clear", width = KeyWidth, modifier = keyModifier, small = true) { memory.query = "" }
+            }
+        }
+    }
+}
+
+/** Letters and digits only, lower case and without accents, so "Spider-Man" and "spiderman" compare equal. */
+internal fun squash(text: String): String =
+    java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD).filter(Char::isLetterOrDigit).lowercase()
+
+/** How many single-letter changes turn one text into the other. */
+private fun editDistance(a: String, b: String): Int {
+    var last = IntArray(b.length + 1) { it }
+    a.forEachIndexed { i, ca ->
+        val row = IntArray(b.length + 1)
+        row[0] = i + 1
+        b.forEachIndexed { j, cb ->
+            row[j + 1] = minOf(row[j] + 1, last[j + 1] + 1, last[j] + if (ca == cb) 0 else 1)
+        }
+        last = row
+    }
+    return last[b.length]
+}
+
+/**
+ * The titles you're most likely typing, up to three: those whose start is closest to the text so
+ * far (in this list's order if they tie), leaving out what you've already typed in full. A title
+ * has to contain what you typed, or start with it give or take a typo (one per three letters), as
+ * searches also return titles for other reasons, like who's in them.
+ */
+internal fun List<String>.suggestionsFor(query: String): List<String> {
+    val typed = squash(query)
+    if (typed.isEmpty()) return emptyList()
+    fun distance(title: String) = editDistance(typed, squash(title).take(typed.length))
+    return filter { distance(it) <= typed.length / 3 || typed in squash(it) }
+        .sortedBy(::distance).distinct().filter { squash(it) != typed }.take(3)
+}
+
+/** Beside the search box: OK opens the TV's speech recogniser, and what you say becomes the search. */
+@Composable
+private fun MicButton(modifier: Modifier, onPress: () -> Unit) {
+    Surface(
+        onClick = onPress,
+        modifier = modifier.confettiAnchor().returnFocusHere().width(KeyWidth).height(48.dp),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = palette.text.copy(alpha = 0.07f),
+            focusedContainerColor = palette.text,
+            contentColor = palette.text,
+            focusedContentColor = palette.background,
+        ),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(painterResource(com.example.plex_tv_app.R.drawable.ic_mic), contentDescription = "Voice search")
+        }
+    }
+}
+
+/** A suggested title under the search box; OK searches for it. */
+@Composable
+private fun Suggestion(title: String, modifier: Modifier, onPick: () -> Unit) {
+    Surface(
+        onClick = onPick,
+        modifier = modifier.confettiAnchor().returnFocusHere().height(34.dp),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = palette.text.copy(alpha = 0.06f),
+            focusedContainerColor = palette.text,
+            contentColor = palette.text,
+            focusedContentColor = palette.background,
+        ),
+    ) {
+        Box(Modifier.fillMaxHeight().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+            Text("⌕  $title", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -342,7 +477,7 @@ private fun SearchResults(
 
 /** Before you type: your recent searches, one press away. */
 @Composable
-private fun RecentSearches(recent: List<String>, onPick: (String) -> Unit) {
+internal fun RecentSearches(recent: List<String>, onPick: (String) -> Unit) {
     if (recent.isEmpty()) {
         Note("Type a title, actor or collection. Results appear as you type.")
         return
@@ -372,6 +507,6 @@ private fun RecentSearches(recent: List<String>, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Note(text: String) {
+internal fun Note(text: String) {
     Text(text, fontSize = 15.sp, color = palette.muted, modifier = Modifier.padding(top = 4.dp, end = 48.dp))
 }

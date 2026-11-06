@@ -6,7 +6,7 @@ plugins {
 }
 
 // app's version no. Bump it for every release: the updater only offers a higher version.
-val plexusVersion = "1.0.2"
+val plexusVersion = "1.0.3"
 // 1.2.3 → 10203, so each release's code is higher than the last.
 val plexusVersionCode: Int = plexusVersion.split(".").let { parts ->
     parts[0].toInt() * 10000 + parts[1].toInt() * 100 + parts[2].toInt()

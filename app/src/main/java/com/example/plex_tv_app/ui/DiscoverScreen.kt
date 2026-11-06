@@ -55,7 +55,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,11 +70,15 @@ import com.example.plex_tv_app.arr.ArrClient
 import com.example.plex_tv_app.arr.ArrKind
 import com.example.plex_tv_app.arr.ArrTitle
 import com.example.plex_tv_app.arr.ArrTracked
+import com.example.plex_tv_app.arr.QueueItem
 import com.example.plex_tv_app.plex.DiscoverHub
+import com.example.plex_tv_app.plex.PlexClient
 import com.example.plex_tv_app.plex.PlexDetails
 import com.example.plex_tv_app.plex.PlexDiscover
+import com.example.plex_tv_app.plex.PlexHub
 import com.example.plex_tv_app.plex.PlexItem
 import com.example.plex_tv_app.plex.PlexServerApi
+import com.example.plex_tv_app.settings.CardText
 import com.example.plex_tv_app.settings.DiscoverSource
 import com.example.plex_tv_app.settings.LocalSettings
 import com.example.plex_tv_app.tmdb.TmdbClient
@@ -107,8 +110,6 @@ class DiscoverMemory {
     var library by mutableStateOf<Map<String, PlexItem>>(emptyMap())
     /** What Radarr/Sonarr already track (owner only), for the "Monitored" tag. */
     var tracked by mutableStateOf<Set<String>>(emptySet())
-    /** Radarr and Sonarr's download queues (owner only), refreshed while Discover is open. */
-    var queue by mutableStateOf<List<com.example.plex_tv_app.arr.QueueItem>>(emptyList())
     var loadedAt by mutableLongStateOf(0L)
     var loadedFrom: DiscoverSource? = null
     var error by mutableStateOf<String?>(null)
@@ -117,12 +118,81 @@ class DiscoverMemory {
     var focusedRow by mutableIntStateOf(0)
     var attempt by mutableIntStateOf(0) // bumped by "Try again"
     var filter by mutableStateOf(DiscoverFilter.All)
-    var query by mutableStateOf("")
+    /** The search page is open in place of the rows (it survives going in and out of a title). */
+    var searching by mutableStateOf(false)
+    /** The results across the whole page with the filters, in place of the keyboard. */
+    var searchFullScreen by mutableStateOf(false)
+    val search = SearchMemory()
     /** Titles added from here this session, shown as "Added" straight away. */
     val added = mutableStateMapOf<String, Boolean>()
 }
 
 private fun TmdbTitle.addedKey() = "${kind.name}:${plexId ?: id}"
+
+/** Radarr and Sonarr's download queues (owner only), kept by the Shell for Discover and the libraries. */
+class DownloadQueue {
+    var items by mutableStateOf<List<QueueItem>>(emptyList())
+        private set
+
+    suspend fun refresh(settings: com.example.plex_tv_app.settings.AppSettings) {
+        // If one can't be reached for a moment, keep what it last said rather than emptying the row.
+        suspend fun fetch(kind: ArrKind) = settings.arr(kind)?.let { c ->
+            runCatching { c.queue() }.getOrElse { items.filter { q -> q.kind == kind } }
+        }.orEmpty()
+        items = coroutineScope {
+            val movies = async { fetch(ArrKind.Movie) }
+            val shows = async { fetch(ArrKind.Show) }
+            movies.await() + shows.await()
+        }
+    }
+}
+
+/** The download queue, for anything that shows a title's status. Provided by the Shell. */
+internal val LocalDownloads = staticCompositionLocalOf<DownloadQueue?> { null }
+
+/** What's downloading for the title with these [keys] (its ids, as in TmdbTitle.libraryKeys()). */
+@Composable
+internal fun downloadsOf(keys: Collection<String>): List<QueueItem> =
+    LocalDownloads.current?.items.orEmpty().filter { q -> q.keys.any { it in keys } }
+
+/** A poster's corner tag: "Downloading 45%", "Queued", or how many of a show's episodes. */
+private fun List<QueueItem>.posterBadge(): String? = when (size) {
+    0 -> null
+    1 -> first().let { q ->
+        when (q.state) {
+            com.example.plex_tv_app.tmdb.EpisodeState.Downloading -> "Downloading ${((q.progress ?: 0f) * 100).toInt()}%"
+            com.example.plex_tv_app.tmdb.EpisodeState.Problem -> "Download problem"
+            else -> "Queued"
+        }
+    }
+    else -> "$size downloading"
+}
+
+/** A line for a title's page or panel: "Downloading 45% · 12 min left". */
+internal fun List<QueueItem>.statusLine(): String? = when (size) {
+    0 -> null
+    1 -> first().let { q ->
+        when (q.state) {
+            com.example.plex_tv_app.tmdb.EpisodeState.Downloading -> "Downloading ${q.line()}"
+            com.example.plex_tv_app.tmdb.EpisodeState.Problem -> "Download problem"
+            else -> q.statusText ?: "Queued"
+        }
+    }
+    else -> "$size episodes downloading"
+}
+
+/** Checks the download queue every 10 seconds while the page calling this is showing. */
+@Composable
+internal fun KeepDownloadsFresh(api: PlexServerApi, downloads: DownloadQueue) {
+    val settings = LocalSettings.current
+    LaunchedEffect(Unit) {
+        if (!settings.canDownload(api.canManage)) return@LaunchedEffect
+        while (true) {
+            downloads.refresh(settings)
+            kotlinx.coroutines.delay(10_000)
+        }
+    }
+}
 
 /**
  * Discover: what's trending, popular and coming up (from Plex's discovery service or TMDB),
@@ -131,7 +201,14 @@ private fun TmdbTitle.addedKey() = "${kind.name}:${plexId ?: id}"
  * to add it through Radarr or Sonarr (server owner only).
  */
 @Composable
-fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory, onOpen: (PlexItem) -> Unit) {
+fun DiscoverScreen(
+    api: PlexServerApi,
+    client: PlexClient,
+    cardScale: Float,
+    memory: DiscoverMemory,
+    downloads: DownloadQueue,
+    onOpen: (PlexItem) -> Unit,
+) {
     val settings = LocalSettings.current
     val source = settings.discoverSource
     val plex = LocalPlexDiscover.current
@@ -200,18 +277,7 @@ fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory,
     LaunchedEffect(Unit) {
         if (settings.canDownload(api.canManage)) memory.tracked = ArrTracked.get(settings)
     }
-    // The download queue, every 10 seconds while you're here.
-    LaunchedEffect(Unit) {
-        if (!settings.canDownload(api.canManage)) return@LaunchedEffect
-        while (true) {
-            memory.queue = coroutineScope {
-                val movies = async { settings.arr(ArrKind.Movie)?.let { runCatching { it.queue() }.getOrNull() }.orEmpty() }
-                val shows = async { settings.arr(ArrKind.Show)?.let { runCatching { it.queue() }.getOrNull() }.orEmpty() }
-                movies.await() + shows.await()
-            }
-            kotlinx.coroutines.delay(10_000)
-        }
-    }
+    KeepDownloadsFresh(api, downloads)
 
     // Fetch the first screenful of posters before showing the page, so it doesn't open on grey boxes.
     LaunchedEffect(memory.loadedAt) {
@@ -222,98 +288,98 @@ fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory,
         memory.ready = true
     }
 
-    var searchOpen by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf<Pair<String, String>?>(null) } // row key → title
 
-    // Pressing Up from the rows always lands on the filter you're using (never a neighbour, which
-    // would switch filters as it's highlighted). Set just before focus moves up, cleared a frame later.
+    // The filters are only reachable from below by pressing Up, which always lands on the filter
+    // you're using (never a neighbour, which would switch filters as it's highlighted). Left and
+    // Right never reach them, even from a lone card with a filter beside it. Both are set just
+    // before focus moves, and cleared a frame later.
     val chipRequesters = remember { DiscoverFilter.entries.associateWith { FocusRequester() } }
     val enteringChips = remember { mutableStateOf(false) }
+    val movingSideways = remember { mutableStateOf(false) }
     val chipScope = rememberCoroutineScope()
+    val watchContent = remember {
+        Modifier.onPreviewKeyEvent { e ->
+            if (e.type == KeyEventType.KeyDown) {
+                when (e.nativeKeyEvent.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> enteringChips.value = true
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> movingSideways.value = true
+                    else -> return@onPreviewKeyEvent false
+                }
+                chipScope.launch {
+                    withFrameNanos { }
+                    enteringChips.value = false
+                    movingSideways.value = false
+                }
+            }
+            false // only watching; the move itself happens as normal
+        }
+    }
+    val otherChip = Modifier.focusProperties { canFocus = !enteringChips.value && !movingSideways.value }
+    val filterChips: @Composable () -> Unit = {
+        DiscoverFilter.entries.forEach { f ->
+            // Highlighting a filter applies it straight away.
+            Chip(
+                f.label,
+                selected = memory.filter == f,
+                modifier = Modifier
+                    .focusRequester(chipRequesters.getValue(f))
+                    .focusProperties { canFocus = if (enteringChips.value) memory.filter == f else !movingSideways.value },
+                onFocused = {
+                    enteringChips.value = false
+                    if (memory.filter != f) {
+                        memory.filter = f
+                        memory.focusedRow = 0
+                    }
+                },
+            ) {}
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+    val closeSearch = {
+        memory.search.query = ""
+        memory.searching = false
+        memory.searchFullScreen = false
+    }
 
-    Column(Modifier.fillMaxSize().padding(top = 28.dp)) {
+    if (memory.searching && (source != DiscoverSource.Tmdb || tmdb != null)) {
+        DiscoverSearch(
+            api, client, memory, cardScale, tmdb, plex, watchContent, enteringChips, movingSideways,
+            chipRequesters.getValue(memory.filter), filterChips, onOpen, closeSearch,
+        )
+    } else Column(Modifier.fillMaxSize().padding(top = 28.dp)) {
         // Title, filters and search.
         Text("Discover", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 48.dp))
         Spacer(Modifier.height(10.dp))
         // Filters and search on their own line, clear of the clock.
         Row(Modifier.padding(start = 48.dp, end = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-            DiscoverFilter.entries.forEach { f ->
-                // Highlighting a filter applies it straight away.
-                Chip(
-                    f.label,
-                    selected = memory.filter == f,
-                    // Coming up from the rows, only the current filter can take focus, so it lands
-                    // there directly (no other filter is highlighted on the way, which would switch it).
-                    modifier = Modifier
-                        .focusRequester(chipRequesters.getValue(f))
-                        .focusProperties { canFocus = !enteringChips.value || memory.filter == f },
-                    onFocused = {
-                        enteringChips.value = false
-                        if (memory.filter != f) {
-                            memory.filter = f
-                            memory.focusedRow = 0
-                        }
-                    },
-                ) {}
-                Spacer(Modifier.width(8.dp))
-            }
+            filterChips()
             Spacer(Modifier.width(12.dp))
-            Chip(
-                if (memory.query.isBlank()) "⌕  Search" else "⌕  ${memory.query}",
-                selected = memory.query.isNotBlank(),
-                modifier = Modifier.focusProperties { canFocus = !enteringChips.value },
-            ) {
-                searchOpen = true
-            }
-            if (memory.query.isNotBlank()) {
-                Spacer(Modifier.width(8.dp))
-                Chip("✕  Clear", selected = false, modifier = Modifier.focusProperties { canFocus = !enteringChips.value }) { memory.query = "" }
-            }
+            Chip("⌕  Search", selected = false, modifier = otherChip) { memory.searching = true }
         }
         Spacer(Modifier.height(14.dp))
 
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
-                        enteringChips.value = true
-                        chipScope.launch {
-                            withFrameNanos { }
-                            enteringChips.value = false
-                        }
-                    }
-                    false // only watching; the move itself happens as normal
-                },
-        ) {
+        Box(Modifier.fillMaxWidth().weight(1f).then(watchContent)) {
             when {
                 source == DiscoverSource.Tmdb && tmdb == null ->
                     DiscoverNote("Add a TMDB key in Settings → Server, or switch Discover to Plex there.")
-                memory.query.isNotBlank() -> DiscoverSearch(api, memory, cardScale, tmdb, plex, onOpen)
                 memory.error != null -> DiscoverProblem(memory.error!!) {
                     memory.error = null
                     memory.loadedAt = 0L
                     memory.attempt++
                 }
-                memory.rows.isEmpty() || !memory.ready -> CentreSpinner()
-                else -> DiscoverRows(api, memory, cardScale, onOpen) { key, title -> expanded = key to title }
+                memory.rows.isEmpty() || !memory.ready -> {
+                    CentreSpinner()
+                    // Nothing here can take the highlight yet, and the side nav only closes once
+                    // something does, so the current filter holds it until the rows arrive.
+                    LaunchedEffect(Unit) {
+                        withFrameNanos { }
+                        runCatching { chipRequesters.getValue(memory.filter).requestFocus() }
+                    }
+                }
+                else -> DiscoverRows(api, memory, downloads, cardScale, onOpen) { key, title -> expanded = key to title }
             }
         }
-    }
-
-    if (searchOpen) {
-        TextEntryPanel(
-            title = "Search Discover",
-            initial = memory.query,
-            hint = "A movie or show",
-            keyboardType = KeyboardType.Text,
-            onSave = { v ->
-                searchOpen = false
-                memory.query = v.trim()
-            },
-            onClose = { searchOpen = false },
-        )
     }
 
     expanded?.let { (key, title) ->
@@ -346,6 +412,7 @@ fun DiscoverScreen(api: PlexServerApi, cardScale: Float, memory: DiscoverMemory,
 private fun DiscoverRows(
     api: PlexServerApi,
     memory: DiscoverMemory,
+    downloads: DownloadQueue,
     cardScale: Float,
     onOpen: (PlexItem) -> Unit,
     onSeeMore: (String, String) -> Unit,
@@ -363,7 +430,7 @@ private fun DiscoverRows(
         if (shown.isEmpty()) {
             DiscoverNote("Nothing to show for ${filter.label}.")
         } else Column(Modifier.fillMaxSize().verticalScroll(scroll).sectionContent(scroller).padding(start = 34.dp)) {
-            val queue = memory.queue.filter {
+            val queue = downloads.items.filter {
                 when (filter) {
                     DiscoverFilter.All -> true
                     DiscoverFilter.Movies -> it.kind == ArrKind.Movie
@@ -409,67 +476,237 @@ private fun DiscoverRows(
     RequestInitialFocus(firstCard, focusDone)
 }
 
-/** Search results: a Movies row and a TV Shows row (as the filter allows). */
+/**
+ * Search, laid out like the main Search page: the on-screen keyboard on the left, a Movies row and
+ * a TV Shows row on the right, updating as you type. Full screen swaps the keyboard for the filters
+ * and the results across the whole page. Close search returns to the rows.
+ */
 @Composable
 private fun DiscoverSearch(
     api: PlexServerApi,
+    client: PlexClient,
     memory: DiscoverMemory,
     cardScale: Float,
     tmdb: TmdbClient?,
     plex: PlexDiscover?,
+    watchContent: Modifier,
+    enteringChips: androidx.compose.runtime.MutableState<Boolean>,
+    movingSideways: androidx.compose.runtime.MutableState<Boolean>,
+    currentChip: FocusRequester,
+    filterChips: @Composable () -> Unit,
     onOpen: (PlexItem) -> Unit,
+    onClose: () -> Unit,
 ) {
     val settings = LocalSettings.current
-    val query = memory.query
-    var problem by remember(query) { mutableStateOf<String?>(null) }
-    val results by produceState<List<TmdbTitle>?>(null, query, settings.discoverSource) {
-        value = null
-        value = try {
-            when (settings.discoverSource) {
-                DiscoverSource.Tmdb -> tmdb?.search(query).orEmpty()
-                DiscoverSource.Plex -> plex?.search(query).orEmpty()
-            }
+    val search = memory.search
+    val query = search.query
+    var results by remember { mutableStateOf<List<TmdbTitle>?>(null) }
+    var searching by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var recent by remember { mutableStateOf(client.recentSearches) }
+    var focused by remember { mutableStateOf(false) }
+    val full = memory.searchFullScreen && query.isNotBlank()
+
+    // Search as you type, after a short pause so every key press doesn't hit the service.
+    LaunchedEffect(query, settings.discoverSource) {
+        if (query.isBlank()) {
+            results = null
+            searching = false
+            problem = null
+            return@LaunchedEffect
+        }
+        searching = true
+        kotlinx.coroutines.delay(300)
+        try {
+            results = when (settings.discoverSource) {
+                DiscoverSource.Tmdb -> tmdb?.search(query.trim()).orEmpty()
+                DiscoverSource.Plex -> plex?.search(query.trim()).orEmpty()
+            }.closestTo(query)
+            problem = null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             problem = e.message ?: "no answer"
-            emptyList()
+        } finally {
+            searching = false
         }
     }
-    val list = results
-    when {
-        list == null -> CentreSpinner()
-        problem != null -> DiscoverNote("Search didn't work: $problem")
-        else -> {
-            val movies = list.filter { it.kind == ArrKind.Movie && memory.filter.keep(it) }
-            val shows = list.filter { it.kind == ArrKind.Show && memory.filter.keep(it) }
-            if (movies.isEmpty() && shows.isEmpty()) {
-                DiscoverNote("Nothing found for \"$query\".")
-            } else {
-            val firstCard = remember(query) { FocusRequester() }
-            val focusDone = remember(query) { mutableStateOf(false) }
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 34.dp)) {
-                listOf("Movies" to movies, "TV Shows" to shows).filter { it.second.isNotEmpty() }.forEachIndexed { i, (title, titles) ->
-                    TmdbRowView(
-                        title = title,
-                        titles = titles,
-                        cardScale = cardScale,
-                        library = memory.library,
-                        added = memory.added,
-                        canManage = LocalSettings.current.canDownload(api.canManage),
-                        modifier = Modifier,
-                        startPad = 14.dp,
-                        firstCard = if (i == 0) firstCard else null,
-                        tracked = memory.tracked,
-                        onOpen = onOpen,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-                Spacer(Modifier.height(40.dp))
+
+    val firstKey = remember { FocusRequester() }
+    val firstCard = remember { FocusRequester() }
+    val keyboardDone = remember(full) { mutableStateOf(false) }
+
+    // The button that opened full screen is gone, so the highlight moves to the first result,
+    // or the current filter if there are none.
+    LaunchedEffect(full, results != null) {
+        if (!full || results == null) return@LaunchedEffect
+        fun tryFocus(r: FocusRequester) = runCatching { r.requestFocus() }.let { it.isSuccess && (it.getOrNull() as Any?) != false }
+        repeat(3) {
+            withFrameNanos { }
+            if (tryFocus(firstCard)) return@LaunchedEffect
+        }
+        tryFocus(currentChip)
+    }
+
+    // Only while you're on this page: with the side nav open, Back belongs to the nav.
+    BackHandler(enabled = focused) {
+        if (full) memory.searchFullScreen = false else onClose()
+    }
+
+    val resultsArea: @Composable (DiscoverFilter) -> Unit = { filter ->
+        val list = results
+        when {
+            query.isBlank() -> RecentSearches(recent) {
+                search.query = it
+                runCatching { firstKey.requestFocus() } // the button you pressed is gone now
             }
-            RequestInitialFocus(firstCard, focusDone)
+            problem != null -> Note("Search didn't work: $problem")
+            list == null || (list.isEmpty() && searching) -> Note("Searching…")
+            list.isEmpty() -> Note("Nothing found for \"${query.trim()}\". Try fewer letters, or another title.")
+            else -> DiscoverResults(api, memory, cardScale, list, query, filter, if (full) firstCard else null, onOpen) {
+                recent = client.rememberSearch(query)
             }
         }
+    }
+    val otherChip = Modifier.focusProperties { canFocus = !enteringChips.value && !movingSideways.value }
+    val suggestions = remember(results, query) { results.orEmpty().map { it.title }.suggestionsFor(query) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(top = 28.dp)
+            .searchTyping(search)
+            .onFocusChanged { focused = it.hasFocus },
+    ) {
+        if (full) {
+            Text("Discover", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 48.dp))
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.padding(start = 48.dp, end = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                filterChips()
+                Spacer(Modifier.width(12.dp))
+                Chip("⌕  ${query.trim()}", selected = true, modifier = otherChip) { memory.searchFullScreen = false }
+                Spacer(Modifier.width(8.dp))
+                Chip("✕  Close search", selected = false, modifier = otherChip, onClick = onClose)
+            }
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth().weight(1f).padding(start = 34.dp).then(watchContent)) {
+                resultsArea(memory.filter)
+            }
+        } else {
+            // Moving up or down the results stays in them: the top keys start higher than a card
+            // and so also count as "above" it, and would otherwise beat the buttons.
+            val keysShut = remember { mutableStateOf(false) }
+            val keyScope = rememberCoroutineScope()
+            val watchResults = remember {
+                Modifier.onPreviewKeyEvent { e ->
+                    val code = e.nativeKeyEvent.keyCode
+                    if (e.type == KeyEventType.KeyDown &&
+                        (code == android.view.KeyEvent.KEYCODE_DPAD_UP || code == android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+                    ) {
+                        keysShut.value = true
+                        keyScope.launch {
+                            withFrameNanos { }
+                            keysShut.value = false
+                        }
+                    }
+                    false // only watching; the move itself happens as normal
+                }
+            }
+            Text("Search Discover", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 48.dp))
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxSize().padding(start = 48.dp)) {
+                val keyGate = Modifier.focusProperties { canFocus = !keysShut.value }
+                SearchKeyboard(
+                    search, searching, firstKey, watchContent,
+                    keyModifier = keyGate,
+                    suggestions = suggestions,
+                )
+                RequestInitialFocus(firstKey, keyboardDone)
+
+                Spacer(Modifier.width(18.dp))
+
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    // Up lands on the first button here, as it does on the current filter elsewhere.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (query.isNotBlank()) {
+                            Chip("Full screen", selected = false, modifier = Modifier.focusProperties { canFocus = !movingSideways.value }) {
+                                memory.searchFullScreen = true
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Chip(
+                            "✕  Close search",
+                            selected = false,
+                            modifier = Modifier.focusProperties {
+                                canFocus = !movingSideways.value && (!enteringChips.value || search.query.isBlank())
+                            },
+                            onClick = onClose,
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Box(Modifier.fillMaxWidth().weight(1f).then(watchContent).then(watchResults)) {
+                        resultsArea(DiscoverFilter.All)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The search services also return loose matches. Keep the titles containing every word you typed,
+ * or everything if none do, so a misspelling still finds its closest matches.
+ */
+private fun List<TmdbTitle>.closestTo(query: String): List<TmdbTitle> {
+    val words = query.trim().split(' ').map(::squash).filter { it.isNotEmpty() }
+    return filter { t -> squash(t.title).let { title -> words.all { it in title } } }.ifEmpty { this }
+}
+
+/**
+ * The results, one row per kind, as [filter] allows. These never take the highlight themselves:
+ * changing the filter or typing leaves it where it is.
+ */
+@Composable
+private fun DiscoverResults(
+    api: PlexServerApi,
+    memory: DiscoverMemory,
+    cardScale: Float,
+    list: List<TmdbTitle>,
+    query: String,
+    filter: DiscoverFilter,
+    firstCard: FocusRequester?,
+    onOpen: (PlexItem) -> Unit,
+    onChosen: () -> Unit,
+) {
+    val movies = list.filter { it.kind == ArrKind.Movie && filter.keep(it) }
+    val shows = list.filter { it.kind == ArrKind.Show && filter.keep(it) }
+    if (movies.isEmpty() && shows.isEmpty()) {
+        Note("No ${filter.label} found for \"${query.trim()}\".")
+        return
+    }
+    val scroll = rememberScrollState()
+    val scroller = remember(scroll) { SectionScroller(scroll) }
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).sectionContent(scroller)) {
+        listOf("Movies" to movies, "TV Shows" to shows).filter { it.second.isNotEmpty() }.forEachIndexed { i, (title, titles) ->
+            key(title) {
+                TmdbRowView(
+                    title = title,
+                    titles = titles,
+                    cardScale = cardScale,
+                    library = memory.library,
+                    added = memory.added,
+                    canManage = LocalSettings.current.canDownload(api.canManage),
+                    modifier = Modifier.section(scroller),
+                    startPad = 14.dp,
+                    firstCard = if (i == 0) firstCard else null,
+                    tracked = memory.tracked,
+                    onOpen = onOpen,
+                    onChosen = onChosen,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+        Spacer(Modifier.height(40.dp))
     }
 }
 
@@ -513,17 +750,18 @@ private fun ExpandedRow(
                             val owned = keys.firstNotNullOfOrNull { memory.library[it] }
                             val wasAdded = memory.added[t.addedKey()] == true
                             val monitored = !wasAdded && owned == null && keys.any { it in memory.tracked }
+                            val downloading = downloadsOf(keys)
                             PosterAddCard(
                                 poster = t.poster,
                                 title = t.title,
                                 year = t.year,
-                                badge = when {
+                                badge = downloading.posterBadge() ?: when {
                                     owned != null -> "In library"
                                     wasAdded -> "Added"
                                     monitored -> "Monitored"
                                     else -> null
                                 },
-                                accent = wasAdded || monitored,
+                                accent = downloading.isNotEmpty() || wasAdded || monitored,
                                 release = if (owned == null) releaseState(t) else null,
                                 modifier = Modifier,
                                 cardModifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).gridItem(gridState, i),
@@ -620,6 +858,7 @@ internal fun TmdbRowView(
     onSeeMore: (() -> Unit)? = null,
     tracked: Set<String> = emptySet(),
     onOpen: (PlexItem) -> Unit,
+    onChosen: () -> Unit = {}, // OK on any card, before it opens
 ) {
     var adding by remember { mutableStateOf<TmdbTitle?>(null) }
     val rowState = rememberLazyListState()
@@ -635,22 +874,24 @@ internal fun TmdbRowView(
                 val owned = keys.firstNotNullOfOrNull { library[it] }
                 val wasAdded = added[t.addedKey()] == true
                 val monitored = !wasAdded && owned == null && keys.any { it in tracked }
+                val downloading = downloadsOf(keys)
                 PosterAddCard(
                     poster = t.poster,
                     title = t.title,
                     year = t.year,
-                    badge = when {
+                    badge = downloading.posterBadge() ?: when {
                         owned != null -> "In library"
                         wasAdded -> "Added"
                         monitored -> "Monitored"
                         else -> null
                     },
-                    accent = wasAdded || monitored,
+                    accent = downloading.isNotEmpty() || wasAdded || monitored,
                     release = if (owned == null) releaseState(t) else null,
                     modifier = Modifier.width(118.dp * cardScale),
                     cardModifier = (if (i == 0 && firstCard != null) Modifier.focusRequester(firstCard) else Modifier)
                         .glideIntoView(rowState, i),
                 ) {
+                    onChosen()
                     if (owned != null) onOpen(owned) else adding = t
                 }
             }
@@ -744,6 +985,7 @@ private fun TmdbPanel(t: TmdbTitle, canManage: Boolean, onClose: () -> Unit, onA
             val release by produceState(Releases.cached(t), t.id) { value = Releases.get(t, settings) }
             release?.line(monitored)?.let { ReleaseLine(it) }
         }
+        downloadsOf(t.libraryKeys()).statusLine()?.let { ReleaseLine(it) }
         Spacer(Modifier.height(12.dp))
         val client = remember { settings.arr(t.kind) }
         when {
@@ -838,8 +1080,8 @@ internal fun MoreLikeThis(api: PlexServerApi, d: PlexDetails, modifier: Modifier
 
 /** "Downloading": what Radarr and Sonarr are fetching, with progress. */
 @Composable
-private fun QueueRow(items: List<com.example.plex_tv_app.arr.QueueItem>, cardScale: Float, modifier: Modifier) {
-    var open by remember { mutableStateOf<com.example.plex_tv_app.arr.QueueItem?>(null) }
+private fun QueueRow(items: List<QueueItem>, cardScale: Float, modifier: Modifier) {
+    var open by remember { mutableStateOf<QueueItem?>(null) }
     val rowState = rememberLazyListState()
     Column(modifier) {
         RowHeading("Downloading", start = 14.dp)
@@ -860,7 +1102,27 @@ private fun QueueRow(items: List<com.example.plex_tv_app.arr.QueueItem>, cardSca
     }
 }
 
-private fun com.example.plex_tv_app.arr.QueueItem.line(): String = when (state) {
+/** One download's details; several (a show's episodes) as a list to pick from first. */
+@Composable
+internal fun DownloadsPanel(items: List<QueueItem>, onClose: () -> Unit) {
+    var picked by remember { mutableStateOf<QueueItem?>(null) }
+    val single = items.singleOrNull()
+    val shown = single ?: picked?.let { p -> items.firstOrNull { it.rowItemKey == p.rowItemKey } ?: p }
+    if (shown != null) {
+        // Keeps its numbers live, as [items] follows the queue.
+        QueuePanel(shown) { if (single != null) onClose() else picked = null }
+        return
+    }
+    SidePanel(title = "Downloading", onClose = onClose) { first ->
+        // As many as the panel has room for.
+        items.take(8).forEachIndexed { i, q ->
+            PickerRow(q.detail ?: q.title, false, if (i == 0) first else Modifier, value = q.line()) { picked = q }
+        }
+        if (items.size > 8) Text("and ${items.size - 8} more", fontSize = 12.sp, color = palette.muted)
+    }
+}
+
+private fun QueueItem.line(): String = when (state) {
     com.example.plex_tv_app.tmdb.EpisodeState.Downloading ->
         listOfNotNull("${((progress ?: 0f) * 100).toInt()}%", timeLeft).joinToString(" · ")
     com.example.plex_tv_app.tmdb.EpisodeState.Problem -> "Problem"
@@ -868,7 +1130,8 @@ private fun com.example.plex_tv_app.arr.QueueItem.line(): String = when (state) 
 }
 
 @Composable
-private fun QueueCard(q: com.example.plex_tv_app.arr.QueueItem, modifier: Modifier, cardModifier: Modifier, onClick: () -> Unit) {
+internal fun QueueCard(q: QueueItem, modifier: Modifier, cardModifier: Modifier, onClick: () -> Unit) {
+    val text = LocalCardText.current ?: LocalSettings.current.cardText
     Column(modifier) {
         Surface(
             onClick = onClick,
@@ -883,14 +1146,18 @@ private fun QueueCard(q: com.example.plex_tv_app.arr.QueueItem, modifier: Modifi
                 ProgressStrip(q.progress ?: 0f, q.state.colour(), Modifier.align(Alignment.BottomStart).height(4.dp))
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(q.title, fontSize = 12.sp, color = palette.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        Text(q.line(), fontSize = 11.sp, color = q.state.colour(), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (text != CardText.None) {
+            Spacer(Modifier.height(6.dp))
+            Text(q.title, fontSize = 12.sp, color = palette.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            if (text == CardText.Full) {
+                Text(q.line(), fontSize = 11.sp, color = q.state.colour(), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
 @Composable
-private fun QueuePanel(q: com.example.plex_tv_app.arr.QueueItem, onClose: () -> Unit) {
+internal fun QueuePanel(q: QueueItem, onClose: () -> Unit) {
     SidePanel(title = if (q.kind == ArrKind.Movie) "Downloading movie" else "Downloading episode", onClose = onClose) { first ->
         TitleHeader(q.poster, q.title, listOfNotNull(q.detail), null)
         Spacer(Modifier.height(12.dp))
@@ -920,3 +1187,45 @@ private fun QueuePanel(q: com.example.plex_tv_app.arr.QueueItem, onClose: () -> 
         PickerRow("Close", false, first) { onClose() }
     }
 }
+
+/** The Downloading row on a library's Recommended tab: each download stands in as a [PlexItem] there. */
+internal const val DownloadsHubId = "downloading"
+internal val QueueItem.rowItemKey get() = "$DownloadsHubId:${kind.name}:$id"
+
+/** Adds a Downloading row to [hubs], second so it peeks in under the first without moving you off it. */
+internal fun withDownloads(hubs: List<PlexHub>, queue: List<QueueItem>): List<PlexHub> {
+    if (queue.isEmpty()) return hubs
+    val row = PlexHub(DownloadsHubId, "Downloading", queue.map { it.asRowItem() })
+    return hubs.take(1) + row + hubs.drop(1)
+}
+
+private fun QueueItem.asRowItem() = PlexItem(
+    ratingKey = rowItemKey,
+    title = title,
+    type = if (kind == ArrKind.Movie) "movie" else "show",
+    year = null,
+    thumb = null,
+    index = null,
+    leafCount = null,
+    summary = detail,
+    art = null,
+    parentTitle = null,
+    grandparentTitle = null,
+    parentIndex = null,
+    viewOffset = null,
+    duration = null,
+    viewCount = null,
+    viewedLeafCount = null,
+    userRating = null,
+    parentThumb = null,
+    grandparentThumb = null,
+    contentRating = null,
+    releaseDate = null,
+    audienceRating = null,
+    genres = emptyList(),
+    clearLogo = null,
+    parentRatingKey = null,
+    grandparentRatingKey = null,
+    titleSort = null,
+    addedAt = null,
+)

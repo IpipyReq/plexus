@@ -477,6 +477,7 @@ fun Shell(
     // Per-profile settings (text size) follow whoever's signed in.
     SideEffect { settings.useProfile(client.profileId) }
     val discoverMemory = remember(api) { DiscoverMemory() }
+    val downloads = remember(api) { DownloadQueue() }
     val plexDiscover = remember(client) { com.example.plex_tv_app.plex.PlexDiscover(client) }
     val searchMemory = remember(api) { SearchMemory() } // the search survives going in and out of results
     fun gridMemory(path: String) = gridMemories.getOrPut(path) { GridMemory() }
@@ -517,6 +518,7 @@ fun Shell(
                 LocalUpdateMetadata provides (if (api.canManage) ({ item: PlexItem -> updateMetadata(item) }) else null),
                 LocalReturnFocus provides returnFocus,
                 LocalPlexDiscover provides plexDiscover,
+                LocalDownloads provides downloads,
             ) {
             key(shown, drilldowns.size, visit) {
                 val top = drilldowns.lastOrNull()
@@ -549,6 +551,7 @@ fun Shell(
                             onOpenCollection = { c -> drilldowns.add(Page.Details(DetailsTarget(c.ratingKey))) },
                             onOpenCategory = { c -> drilldowns.add(Page.Items("${d.library.title} · ${c.title}", c.path)) },
                             onLongPress = gridLongPress,
+                            downloads = downloads,
                             rowOrder = libraryRowOrder(d.library.key),
                             rowStyles = libraryRowStyles(d.library.key),
                             onRowLongPress = { item, rowKey, restore ->
@@ -556,7 +559,7 @@ fun Shell(
                             },
                         )
                         Destination.Search -> SearchScreen(api, client, cardScale, searchMemory, open, gridLongPress)
-                        Destination.Discover -> DiscoverScreen(api, cardScale, discoverMemory, open)
+                        Destination.Discover -> DiscoverScreen(api, client, cardScale, discoverMemory, downloads, open)
                         Destination.Settings -> CompositionLocalProvider(LocalBringIntoViewSpec provides systemScroll) { SettingsScreen(
                             client = client,
                             api = api,

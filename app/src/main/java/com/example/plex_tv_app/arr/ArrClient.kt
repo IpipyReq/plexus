@@ -40,6 +40,7 @@ data class QueueItem(
     val timeLeft: String?,
     val sizeText: String?,
     val release: String?, // the release's name
+    val keys: Set<String> = emptySet(), // the title's ids, in the form TmdbTitle.libraryKeys() uses
 )
 
 /** A quality profile or root folder to choose from. */
@@ -286,6 +287,7 @@ class ArrClient(val kind: ArrKind, baseUrl: String, private val apiKey: String) 
             val ep = q.optJSONObject("episode")
             val (state, progress, text) = queueState(q)
             val size = q.optDouble("size", 0.0)
+            val k = if (kind == ArrKind.Movie) "movie" else "show"
             QueueItem(
                 kind = kind,
                 id = q.optInt("id"),
@@ -301,6 +303,13 @@ class ArrClient(val kind: ArrKind, baseUrl: String, private val apiKey: String) 
                 timeLeft = timeLeftText(q.optString("timeleft")),
                 sizeText = if (size > 0) String.format(java.util.Locale.US, "%.1f GB", size / 1_073_741_824.0) else null,
                 release = q.optString("title").takeIf { it.isNotBlank() },
+                keys = buildSet {
+                    owner.optInt("tmdbId", 0).takeIf { it > 0 }?.let { add("tmdb:$k:$it") }
+                    owner.optInt("tvdbId", 0).takeIf { it > 0 }?.let { add("tvdb:$k:$it") }
+                    owner.optString("title").takeIf { it.isNotBlank() }?.let {
+                        add(titleKey(k, it, owner.optInt("year", 0).takeIf { y -> y > 0 }))
+                    }
+                },
             )
         }
     }
