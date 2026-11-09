@@ -37,6 +37,7 @@ data class PlexItem(
     val titleSort: String?, // how Plex sorts the title (e.g. without "The")
     val addedAt: Long?, // when it was added to the library (seconds)
     val subtype: String? = null, // collections: what they hold, "movie" or "show"
+    val quality: String? = null, // the best version's resolution, e.g. "4K", "1080p" (movies/episodes)
 ) {
     /** Fully watched: a watched movie/episode, or a show/season with every episode watched. */
     val isWatched: Boolean
@@ -75,6 +76,20 @@ data class MediaVersion(
 )
 
 data class MediaFile(val path: String?, val sizeBytes: Long?)
+
+/**
+ * One way to play a movie: a file (version) of it, or of another edition of it (Plex keeps
+ * editions, e.g. a director's cut, as separate movies). [mediaIndex] picks the file.
+ */
+data class PlayVersion(
+    val item: PlexItem,
+    val mediaIndex: Int,
+    val label: String, // in full: "Super Duper Cut · 4K DoVi/HDR10 (HEVC Main 10)"
+    val shortLabel: String, // for the button: "Super Duper Cut", "Standard", "4K"
+    val size: String?,
+    val duration: Long?, // this file's length (ms); editions and cuts differ
+    val quality: String?, // this file's resolution, as on PlexItem.quality
+)
 
 /** A published review (Plex gets these from Rotten Tomatoes). */
 data class Review(
@@ -490,11 +505,12 @@ class PlexServerApi(
 
     // ---------- Playback ----------
 
-    /** The file, length and intro/credits markers for a movie or episode. */
-    suspend fun playbackInfo(item: PlexItem): PlaybackInfo {
+    /** The file, length and intro/credits markers for a movie or episode ([mediaIndex]: which version). */
+    suspend fun playbackInfo(item: PlexItem, mediaIndex: Int = 0): PlaybackInfo {
         val meta = container(get("/library/metadata/${item.ratingKey}?includeMarkers=1"))
             .optJSONArray("Metadata")?.optJSONObject(0) ?: return PlaybackInfo(null, item.duration, emptyList())
-        val part = meta.optJSONArray("Media")?.optJSONObject(0)?.optJSONArray("Part")?.optJSONObject(0)
+        val media = meta.optJSONArray("Media")
+        val part = (media?.optJSONObject(mediaIndex) ?: media?.optJSONObject(0))?.optJSONArray("Part")?.optJSONObject(0)
         val markers = (meta.optJSONArray("Marker") ?: JSONArray()).objects().mapNotNull { m ->
             val start = m.longOrNull("startTimeOffset") ?: return@mapNotNull null
             val end = m.longOrNull("endTimeOffset") ?: return@mapNotNull null
@@ -638,11 +654,12 @@ class PlexServerApi(
         burnSubtitles: String,
         subtitleSize: Int = 100,
         autoAdjustQuality: Boolean = false, // let the server lower quality when the connection struggles
+        mediaIndex: Int = 0, // which version of the file
     ): String {
         val params = linkedMapOf(
             "hasMDE" to "1",
             "path" to "/library/metadata/${item.ratingKey}",
-            "mediaIndex" to "0",
+            "mediaIndex" to mediaIndex.toString(),
             "partIndex" to "0",
             "protocol" to "hls",
             "fastSeek" to "1",
@@ -741,6 +758,50 @@ class PlexServerApi(
     /** Sets your rating out of 10 (Plex shows 5 stars, so 1 star = 2). Null clears it. */
     suspend fun rate(item: PlexItem, outOfTen: Int?) {
         client.request("PUT", "$baseUrl/:/rate?key=${item.ratingKey}&identifier=$LIBRARY_ID&rating=${outOfTen ?: -1}", token)
+    }
+
+    /**
+     * Every way to play a movie: each of its files, then each file of its other editions (movies in
+     * the same library with the same Plex id). Just the one if that's all there is.
+     */
+    suspend fun playVersions(item: PlexItem): List<PlayVersion> {
+        val mc = container(get("/library/metadata/${item.ratingKey}"))
+        val meta = mc.optJSONArray("Metadata")?.optJSONObject(0) ?: return emptyList()
+        val guid = meta.stringOrNull("guid")?.takeIf { it.startsWith("plex://") }
+        val section = meta.stringOrNull("librarySectionID") ?: mc.stringOrNull("librarySectionID")
+        val others = if (guid == null || section == null) emptyList() else runCatching {
+            val keys = (container(get("/library/sections/$section/all?guid=${URLEncoder.encode(guid, "UTF-8")}"))
+                .optJSONArray("Metadata") ?: JSONArray()).objects()
+                .mapNotNull { it.stringOrNull("ratingKey") }.filter { it != item.ratingKey }
+            keys.mapNotNull { k -> runCatching { container(get("/library/metadata/$k")).optJSONArray("Metadata")?.optJSONObject(0) }.getOrNull() }
+        }.getOrDefault(emptyList())
+        val editions = listOf(meta) + others
+        return editions.flatMap { m ->
+            val edition = parseItem(m)
+            // An edition with no name, when there are others, is the standard one.
+            val editionName = m.stringOrNull("editionTitle") ?: "Standard".takeIf { editions.size > 1 }
+            val files = (m.optJSONArray("Media") ?: JSONArray()).objects()
+            files.mapIndexed { i, media ->
+                val part = media.optJSONArray("Part")?.optJSONObject(0)
+                val video = (part?.optJSONArray("Stream") ?: JSONArray()).objects().firstOrNull { it.optInt("streamType") == 1 }
+                // "4K DoVi/HDR10 (HEVC Main 10)", else just the resolution.
+                val picture = video?.stringOrNull("displayTitle")
+                    ?: media.stringOrNull("videoResolution")?.let { if (it.all(Char::isDigit)) "${it}p" else it.uppercase() }
+                val resolution = media.stringOrNull("videoResolution")?.let { if (it.all(Char::isDigit)) "${it}p" else it.uppercase() }
+                val bytes = (media.optJSONArray("Part") ?: JSONArray()).objects().sumOf { it.longOrNull("size") ?: 0L }
+                PlayVersion(
+                    item = edition,
+                    mediaIndex = i,
+                    label = listOfNotNull(editionName, picture).joinToString(" · ").ifBlank { "Version ${i + 1}" },
+                    // The resolution only matters when the edition has more than one file.
+                    shortLabel = listOfNotNull(editionName, resolution.takeIf { editionName == null || files.size > 1 })
+                        .joinToString(" ").ifBlank { "Version ${i + 1}" },
+                    size = bytes.takeIf { it > 0 }?.let { String.format(java.util.Locale.US, "%.1f GB", it / 1_073_741_824.0) },
+                    duration = media.longOrNull("duration") ?: edition.duration,
+                    quality = qualityName(mediaHeight(media)),
+                )
+            }
+        }
     }
 
     /** Technical details of the file(s) behind a movie or episode. */
@@ -849,7 +910,29 @@ class PlexServerApi(
         titleSort = o.stringOrNull("titleSort"),
         addedAt = o.longOrNull("addedAt"),
         subtype = o.stringOrNull("subtype"),
+        quality = qualityOf(o),
     )
+
+    /** The best of a movie or episode's versions, as Plex names resolutions: "4K", "1080p", "SD"... */
+    private fun qualityOf(o: JSONObject): String? =
+        qualityName((o.optJSONArray("Media") ?: JSONArray()).objects().mapNotNull(::mediaHeight).maxOrNull())
+
+    /** One version's resolution as a height: "4k" → 2160, "1080" → 1080, "sd" → 480. */
+    private fun mediaHeight(m: JSONObject): Int? = when (val r = m.stringOrNull("videoResolution")?.lowercase()) {
+        null -> null
+        "4k" -> 2160
+        "sd" -> 480
+        else -> r.toIntOrNull()
+    }
+
+    private fun qualityName(height: Int?): String? {
+        val best = height ?: return null
+        return when {
+            best >= 2160 -> "4K"
+            best <= 576 -> "SD"
+            else -> "${best}p"
+        }
+    }
 
     private fun clearLogoOf(o: JSONObject): String? =
         (o.optJSONArray("Image") ?: JSONArray()).objects()

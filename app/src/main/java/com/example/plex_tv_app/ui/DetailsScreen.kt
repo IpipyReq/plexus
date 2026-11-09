@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -90,6 +91,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.example.plex_tv_app.plex.PlexDetails
 import com.example.plex_tv_app.plex.PlexHub
+import com.example.plex_tv_app.plex.PlayVersion
 import com.example.plex_tv_app.plex.PlaybackInfo
 import com.example.plex_tv_app.plex.PlexItem
 import com.example.plex_tv_app.plex.PlexServerApi
@@ -138,6 +140,8 @@ fun DetailsScreen(
     onSetWatched: (item: PlexItem, watched: Boolean) -> Unit,
     onLongPress: (item: PlexItem, restoreFocus: () -> Unit) -> Unit,
     onShuffle: (items: List<PlexItem>, name: String) -> Unit,
+    // A movie's chosen version (see the Version button); mediaIndex picks the file.
+    onPlayVersion: (item: PlexItem, fromStart: Boolean, mediaIndex: Int) -> Unit = { item, fromStart, _ -> onPlay(item, fromStart) },
 ) {
     var details by remember { mutableStateOf<PlexDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -174,7 +178,7 @@ fun DetailsScreen(
                     }
                     else -> {
                         DetailsBackdrop(api, d.item)
-                        MovieDetails(api, d, logo, reloadToken, onOpen, onPlay, onSetWatched, onLongPress)
+                        MovieDetails(api, d, logo, reloadToken, onOpen, onPlayVersion, onSetWatched, onLongPress)
                     }
                 }
             }
@@ -194,7 +198,7 @@ private fun MovieDetails(
     logo: String?,
     reloadToken: Int,
     onOpen: (PlexItem) -> Unit,
-    onPlay: (PlexItem, Boolean) -> Unit,
+    onPlayVersion: (PlexItem, Boolean, Int) -> Unit,
     onSetWatched: (PlexItem, Boolean) -> Unit,
     onLongPress: (PlexItem, () -> Unit) -> Unit,
 ) {
@@ -217,8 +221,18 @@ private fun MovieDetails(
     }
     val toTop = {}
     val settings = LocalSettings.current
-    val playInfo by produceState<PlaybackInfo?>(null, movie.ratingKey, reloadToken) {
-        value = runCatching { api.playbackInfo(movie) }.getOrNull()
+    // Versions and editions. Picking one only changes what the buttons below act on; Play plays it.
+    val versions by produceState(emptyList<PlayVersion>(), movie.ratingKey, reloadToken) {
+        value = runCatching { api.playVersions(movie) }.getOrDefault(emptyList())
+    }
+    var chosen by remember(movie.ratingKey) { mutableStateOf<Pair<String, Int>?>(null) } // ratingKey to file
+    val version = versions.firstOrNull { (it.item.ratingKey to it.mediaIndex) == chosen }
+        ?: versions.firstOrNull { it.item.ratingKey == movie.ratingKey }
+    val current = version?.item?.takeIf { it.ratingKey != movie.ratingKey } ?: movie // another edition, if picked
+    val mediaIndex = version?.mediaIndex ?: 0
+    var versionPickerOpen by remember { mutableStateOf(false) }
+    val playInfo by produceState<PlaybackInfo?>(null, current.ratingKey, mediaIndex, reloadToken) {
+        value = runCatching { api.playbackInfo(current, mediaIndex) }.getOrNull()
     }
     var subtitlePickerOpen by remember { mutableStateOf(false) }
 
@@ -245,55 +259,74 @@ private fun MovieDetails(
                 Column(Modifier.padding(horizontal = SidePad).width(640.dp)) {
                     TitleBlock(movie, logo, baseHeight = 80.dp)
                     Spacer(Modifier.height(12.dp))
+                    // The chosen version's details: its edition's date and description, its file's length and quality.
                     Facts(
-                        date = dateText(movie.releaseDate) ?: movie.year?.toString(),
-                        length = movie.duration?.let(::lengthText),
-                        item = movie,
+                        date = dateText(current.releaseDate) ?: current.year?.toString(),
+                        length = (version?.duration ?: current.duration)?.let(::lengthText),
+                        item = current.copy(quality = version?.quality ?: current.quality),
                     )
                     d.tagline?.let {
                         Spacer(Modifier.height(10.dp))
                         Text(it, fontFamily = PlexSerif, fontStyle = FontStyle.Italic, fontSize = 15.sp, color = palette.muted, maxLines = 1)
                     }
-                    movie.summary?.let {
+                    current.summary?.let {
                         Spacer(Modifier.height(8.dp))
                         Summary(it, lines = 3)
                     }
                     Credits(d)
                     Spacer(Modifier.height(18.dp))
                     DownloadStatus(api, d)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        val offset = movie.viewOffset
-                        val duration = movie.duration
-                        if (movie.progress != null && offset != null && duration != null) {
+                    // Free to run past the text column, so the last button is never squeezed.
+                    Row(
+                        Modifier.wrapContentWidth(Alignment.Start, unbounded = true),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        val offset = current.viewOffset
+                        val duration = current.duration
+                        if (current.progress != null && offset != null && duration != null) {
                             PillButton(
                                 "Resume", "▶", primary = true,
                                 detail = "${lengthText(duration - offset)} left",
                                 modifier = Modifier.focusRequester(play),
                                 onFocused = toTop,
-                            ) { onPlay(movie, false) }
-                            PillButton("From the start", "↺", onFocused = toTop) { onPlay(movie, true) }
+                            ) { onPlayVersion(current, false, mediaIndex) }
+                            PillButton("From the start", "↺", onFocused = toTop) { onPlayVersion(current, true, mediaIndex) }
                         } else {
                             PillButton("Play", "▶", primary = true, modifier = Modifier.focusRequester(play), onFocused = toTop) {
-                                onPlay(movie, true)
+                                onPlayVersion(current, true, mediaIndex)
+                            }
+                        }
+                        // Picking a version only changes what Play plays; the list has the details.
+                        if (versions.size > 1 && version != null) {
+                            PillButton(version.shortLabel, "≡", onFocused = toTop) { versionPickerOpen = true }
+                            if (versionPickerOpen) {
+                                SidePanel(title = "Version", onClose = { versionPickerOpen = false }) { first ->
+                                    versions.forEachIndexed { i, v ->
+                                        PickerRow(v.label, v == version, if (i == 0) first else Modifier, value = v.size) {
+                                            chosen = v.item.ratingKey to v.mediaIndex
+                                            versionPickerOpen = false
+                                        }
+                                    }
+                                }
                             }
                         }
                         PillButton(
-                            if (movie.isWatched) "Mark unwatched" else "Mark watched",
-                            if (movie.isWatched) "○" else "✓",
+                            if (current.isWatched) "Mark unwatched" else "Mark watched",
+                            if (current.isWatched) "○" else "✓",
                             onFocused = toTop,
-                        ) { onSetWatched(movie, !movie.isWatched) }
+                        ) { onSetWatched(current, !current.isWatched) }
                         LocalUpdateMetadata.current?.let { update ->
-                            PillButton("Update metadata", "⟳", onFocused = toTop) { update(movie) }
+                            PillButton("Update metadata", "⟳", onFocused = toTop) { update(current) }
                         }
                         playInfo?.let { inf ->
                             settings.subtitlePickVersion // update the label when a pick changes
-                            val chosen = chooseSubtitle(settings, movie, inf.subtitles, inf.audioLanguage)
+                            val chosen = chooseSubtitle(settings, current, inf.subtitles, inf.audioLanguage)
                             PillButton(subtitleShortName(chosen), "CC", onFocused = toTop) { subtitlePickerOpen = true }
                             if (subtitlePickerOpen) {
                                 SubtitlePicker(
                                     subtitles = inf.subtitles,
                                     current = chosen,
-                                    onPick = { rememberPick(settings, movie, it); subtitlePickerOpen = false },
+                                    onPick = { rememberPick(settings, current, it); subtitlePickerOpen = false },
                                     onClose = { subtitlePickerOpen = false },
                                 )
                             }
@@ -901,6 +934,7 @@ private fun ShowDetails(
     // Episodes on show, tagged with their season so the row only changes once they've arrived.
     var shown by remember { mutableStateOf<Pair<String, List<PlexItem>>?>(null) }
     var focusedEpisode by remember { mutableStateOf<PlexItem?>(null) }
+    var lastEpisode by remember { mutableStateOf<PlexItem?>(null) } // the episode last highlighted, for Mark watched
 
     // Focus bookkeeping for explicit Up/Down/Left/Right.
     var zone by remember { mutableStateOf(Zone.Buttons) }
@@ -1156,17 +1190,23 @@ private fun ShowDetails(
                         focusedEpisode = null
                     },
                 ) { next?.let { onPlay(it, false) } }
+                // The episode you were last on, else the one Play starts; looked up in the freshly
+                // loaded row so it shows the new state straight after marking it.
+                val markTarget = lastEpisode?.let { last -> shown?.second?.firstOrNull { it.ratingKey == last.ratingKey } ?: last }
+                    ?: upNext
+                val watched = markTarget?.isWatched ?: show.isWatched
                 PillButton(
-                    if (show.isWatched) "Mark unwatched" else "Mark watched",
-                    if (show.isWatched) "○" else "✓",
+                    if (watched) "Mark unwatched" else "Mark watched",
+                    if (watched) "○" else "✓",
                     compact = true,
+                    detail = markTarget?.let { episodeCode(it) },
                     modifier = Modifier.focusRequester(watchedButton),
                     onFocused = {
                         zone = Zone.Buttons
                         lastButton = watchedButton
                         focusedEpisode = null
                     },
-                ) { onSetWatched(show, !show.isWatched) }
+                ) { markTarget?.let { onSetWatched(it, !watched) } }
                 LocalUpdateMetadata.current?.let { update ->
                     PillButton(
                         "Update metadata", "⟳",
@@ -1315,6 +1355,7 @@ private fun ShowDetails(
                                     focusedIndex = i
                                     entryIndex[seasonKey] = i
                                     focusedEpisode = ep
+                                    lastEpisode = ep
                                 },
                                 onLongClick = { restore -> onLongPress(ep, restore) },
                                 modifier = Modifier.width(206.dp),
@@ -1441,7 +1482,7 @@ private fun Facts(date: String?, length: String?, item: PlexItem, showGenres: Bo
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         date?.let { Text(it, fontSize = 13.sp, color = palette.muted) }
         length?.let { Text(it, fontSize = 13.sp, color = palette.muted) }
-        item.contentRating?.let {
+        listOfNotNull(item.quality, item.contentRating).forEach {
             Text(
                 it,
                 fontSize = 11.sp,

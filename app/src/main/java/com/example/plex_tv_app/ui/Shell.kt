@@ -364,10 +364,10 @@ fun Shell(
     var playing by remember { mutableStateOf<PlayRequest?>(null) }
 
     /** Play (or resume) a movie or episode; shows and seasons play their next episode. */
-    fun play(item: PlexItem, fromStart: Boolean) {
+    fun play(item: PlexItem, fromStart: Boolean, mediaIndex: Int = 0) {
         scope.launch {
             val target = runCatching { api.playableFor(item) }.getOrNull()
-            if (target == null) toast("Nothing to play in ${item.title}") else playing = PlayRequest(listOf(target), 0, fromStart)
+            if (target == null) toast("Nothing to play in ${item.title}") else playing = PlayRequest(listOf(target), 0, fromStart, mediaIndex)
         }
     }
 
@@ -530,6 +530,7 @@ fun Shell(
                         onOpen = open,
                         onShuffle = { items, _ -> shuffle(items) },
                         onPlay = ::play,
+                        onPlayVersion = ::play,
                         onSetWatched = ::setWatched,
                         onLongPress = gridLongPress,
                     )

@@ -113,7 +113,12 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 /** What to play: a queue (one title, a shuffled collection...), where to start, and whether to resume. */
-data class PlayRequest(val queue: List<PlexItem>, val index: Int = 0, val fromStart: Boolean = false)
+data class PlayRequest(
+    val queue: List<PlexItem>,
+    val index: Int = 0,
+    val fromStart: Boolean = false,
+    val mediaIndex: Int = 0, // which version of the first title to play (the rest play their first)
+)
 
 private val Gold = Color(0xFFE5A00D)
 private val Bone = Color(0xFFF3EFE7)
@@ -138,6 +143,7 @@ fun PlayerScreen(api: PlexServerApi, request: PlayRequest, onExit: () -> Unit) {
     val item = queue[index]
 
     var info by remember { mutableStateOf<PlaybackInfo?>(null) }
+    var mediaIndex by remember { mutableIntStateOf(0) } // the version playing
     var converting by remember { mutableStateOf(false) } // Plex is converting (transcoding) this one
     var session by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -225,6 +231,7 @@ fun PlayerScreen(api: PlexServerApi, request: PlayRequest, onExit: () -> Unit) {
                 burnSubtitles = if (sub != null) "burn" else "auto",
                 subtitleSize = (settings.subtitleSize.scale * 100).roundToInt(),
                 autoAdjustQuality = settings.autoAdjustQuality,
+                mediaIndex = mediaIndex,
             )
             MediaItem.Builder().setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).setMediaMetadata(metadataFor(current())).build()
         }
@@ -436,7 +443,9 @@ fun PlayerScreen(api: PlexServerApi, request: PlayRequest, onExit: () -> Unit) {
         buffering = true
         skippedIntroFor = null
         directFailed = false
-        val inf = runCatching { api.playbackInfo(item) }.getOrElse {
+        // The version picked on the movie's page, for the title it was picked for.
+        mediaIndex = if (index == request.index) request.mediaIndex else 0
+        val inf = runCatching { api.playbackInfo(item, mediaIndex) }.getOrElse {
             error = "Couldn't load this from the server."
             return@LaunchedEffect
         }
